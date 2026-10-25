@@ -44,9 +44,25 @@ export class Builder {
   merged() { const o = {}; for (const k in this.b) o[k] = mergeGeometries(this.b[k]); return o; }
 }
 
+// 關節：每個可動部位各自收集幾何，座標以關節點為原點
+export class Rig {
+  constructor(lod = 1) { this.lod = lod; this.parts = {}; }
+  get(name, pivot) {
+    if (!this.parts[name]) { const b = new Builder(this.lod); b.base = new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z); this.parts[name] = { b, pivot: pivot.clone() }; }
+    return this.parts[name].b;
+  }
+  addInto(name, m, fn) {
+    const p = this.parts[name]; const W = new Builder(this.lod);
+    W.base = new THREE.Matrix4().makeTranslation(-p.pivot.x, -p.pivot.y, -p.pivot.z).multiply(m);
+    fn(W);
+    for (const k in W.b) (p.b.b[k] ||= []).push(...W.b[k]);
+  }
+}
+export const SHOULDER = { R: V(0.255, 1.46, 0), L: V(-0.255, 1.46, 0) };
+
 // —— 人體 ——
 // s: { armored, armor, cloth, trim, pants, skin, face, hair, beard, beardColor, head, plume, cape, robe, female, tint, arms, weapon }
-export function buildHuman(B, s, pose = 'stand') {
+export function buildHuman(B, s, pose = 'stand', rig = null) {
   const lod = B.lod;
   const skin = s.skin ?? 0xe2b48c, face = s.face ?? skin;
   const T = (shade = 1) => s.tint ? ['tint', new THREE.Color(shade, shade, shade).getHex()] : ['cloth', shade === 1 ? s.cloth : new THREE.Color(s.cloth).multiplyScalar(shade).getHex()];
@@ -59,10 +75,11 @@ export function buildHuman(B, s, pose = 'stand') {
     if (pose === 'ride') { knee = V(sx * 0.28, 0.76, -0.26); ankle = V(sx * 0.31, 0.36, -0.18); }
     else if (pose === 'sit') { knee = V(sx * 0.13, hipY + 0.02, -0.42); ankle = V(sx * 0.13, hipY - 0.4, -0.46); }
     else { knee = V(sx * 0.11, 0.52, -0.02); ankle = V(sx * 0.11, 0.1, 0); }
-    B.limb('cloth', pants, hip, knee, 0.085, 0.07, 10);
-    B.limb('cloth', boot, knee, ankle, 0.068, 0.058, 10);
-    B.box('cloth', boot, 0.11, 0.08, 0.22, M([ankle.x, ankle.y - 0.04, ankle.z - 0.06]));
-    if (s.armored && lod) B.limb('metal', armor, knee.clone().lerp(ankle, 0.05), knee.clone().lerp(ankle, 0.6), 0.075, 0.068, 10, false);
+    const LB = rig && pose === 'stand' ? rig.get(sx < 0 ? 'legL' : 'legR', hip) : B;
+    LB.limb('cloth', pants, hip, knee, 0.085, 0.07, 10);
+    LB.limb('cloth', boot, knee, ankle, 0.068, 0.058, 10);
+    LB.box('cloth', boot, 0.11, 0.08, 0.22, M([ankle.x, ankle.y - 0.04, ankle.z - 0.06]));
+    if (s.armored && lod) LB.limb('metal', armor, knee.clone().lerp(ankle, 0.05), knee.clone().lerp(ankle, 0.6), 0.075, 0.068, 10, false);
   }
   // 下襬
   const [ck, cc] = T(1), [ck2, cc2] = T(0.72);
@@ -140,15 +157,16 @@ export function buildHuman(B, s, pose = 'stand') {
   for (const side of ['R', 'L']) {
     const sx = side === 'R' ? 1 : -1;
     const sh = V(sx * 0.255, 1.46, 0.0), el = arms[side][0], wr = arms[side][1];
-    B.limb(s.bare ? 'skin' : ck, s.bare ? skin : cc, sh, el, 0.066, 0.056, 10);
-    if (s.bare) B.limb('skin', skin, el, wr, 0.056, 0.046, 10);
+    const AB = rig ? rig.get('arm' + side, sh) : B;
+    AB.limb(s.bare ? 'skin' : ck, s.bare ? skin : cc, sh, el, 0.066, 0.056, 10);
+    if (s.bare) AB.limb('skin', skin, el, wr, 0.056, 0.046, 10);
     else if (s.robe && !s.armored) {
-      B.limb(ck, cc, el, wr, 0.06, 0.05, 10);
-      B.add(ck, new THREE.CylinderGeometry(0.15, 0.065, 1, B.s(12), 1, true), cc, between(el.clone().lerp(wr, 0.25), wr.clone().add(wr.clone().sub(el).multiplyScalar(0.12))));
+      AB.limb(ck, cc, el, wr, 0.06, 0.05, 10);
+      AB.add(ck, new THREE.CylinderGeometry(0.15, 0.065, 1, B.s(12), 1, true), cc, between(el.clone().lerp(wr, 0.25), wr.clone().add(wr.clone().sub(el).multiplyScalar(0.12))));
     } else {
-      B.limb(s.armored ? 'metal' : ck, s.armored ? armor : cc, el, wr, 0.055, 0.046, 10);
+      AB.limb(s.armored ? 'metal' : ck, s.armored ? armor : cc, el, wr, 0.055, 0.046, 10);
     }
-    B.sph('skin', skin, 0.046, M([wr.x, wr.y, wr.z]));
+    AB.sph('skin', skin, 0.046, M([wr.x, wr.y, wr.z]));
     hands[side] = wr;
   }
   // 披風
@@ -338,8 +356,11 @@ export function buildWeapon(B, type, s = {}) {
 
 // 依姿勢擺放兵器的矩陣（握在手中）
 function weaponPlacement(type, hands, pose) {
+  return weaponPlacementH(type, hands, pose).map(x => x.m);
+}
+function weaponPlacementH(type, hands, pose) {
   const R = hands.R, L = hands.L;
-  const at = (h, rot) => M([h.x, h.y, h.z], rot);
+  const at = (h, rot) => ({ m: M([h.x, h.y, h.z], rot), hand: h === L ? 'L' : 'R' });
   switch (type) {
     case 'spear': case 'silverSpear': case 'snake': case 'ji':
       return [at(R, pose === 'stand' ? [-0.15, 0, 0] : [-0.95, 0, 0.05])];
@@ -355,7 +376,7 @@ function weaponPlacement(type, hands, pose) {
 }
 
 // —— 戰馬 ——
-export function buildHorse(B, s = {}) {
+export function buildHorse(B, s = {}, rig = null) {
   const c = s.color ?? 0x6b4428, mane = s.mane ?? 0x1c140e, lod = B.lod;
   const legC = s.legColor ?? c;
   B.sph('horse', c, 0.5, M([0, 1.16, 0.02], [0, 0, 0], [0.54, 0.58, 1.42]), 18, 12);
@@ -376,13 +397,14 @@ export function buildHorse(B, s = {}) {
   B.sph('mane', mane, 0.08, M([0, 1.3, 0.9]), 8, 6);
   B.limb('mane', mane, V(0, 1.3, 0.92), V(0, 0.72, 1.1), 0.075, 0.03, 8, false);
   // 腿
-  for (const [x, z, front] of [[-0.17, -0.55, 1], [0.17, -0.55, 1], [-0.18, 0.56, 0], [0.18, 0.56, 0]]) {
+  [[-0.17, -0.55, 1], [0.17, -0.55, 1], [-0.18, 0.56, 0], [0.18, 0.56, 0]].forEach(([x, z, front], li) => {
     const top = V(x, 1.02, z), knee = V(x, 0.56, z + (front ? -0.03 : 0.07)), fet = V(x, 0.14, z + (front ? -0.01 : 0.02));
     if (!front) B.sph('horse', c, 0.2, M([x, 1.08, z], [0, 0, 0], [0.7, 1.2, 1]), 10, 8);
-    B.limb('horse', c, top, knee, front ? 0.1 : 0.12, 0.06, 10);
-    B.limb('horse', legC, knee, fet, 0.05, 0.042, 8);
-    B.cyl('dark', 0x1a1410, 0.05, 0.062, 0.11, 8, M([fet.x, fet.y - 0.06, fet.z]));
-  }
+    const HB = rig ? rig.get('hleg' + li, top) : B;
+    HB.limb('horse', c, top, knee, front ? 0.1 : 0.12, 0.06, 10);
+    HB.limb('horse', legC, knee, fet, 0.05, 0.042, 8);
+    HB.cyl('dark', 0x1a1410, 0.05, 0.062, 0.11, 8, M([fet.x, fet.y - 0.06, fet.z]));
+  });
   // 鞍具
   const [tk, tc] = s.tint ? ['tint', 0xffffff] : ['cloth', s.cloth ?? 0x8a2a1e];
   B.box(tk, tc, 0.64, 0.03, 0.72, M([0, 1.52, 0.04]));
@@ -597,8 +619,8 @@ function groupFrom(B) {
   return grp;
 }
 
-// —— 建立武將模型 ——
-// opts: { mounted, pose }
+// —— 建立武將模型（有關節，可做動作） ——
+// opts: { mounted, pose, portrait, unarmed }
 export function makeHero(id, factionColor, opts = {}) {
   const spec = { ...heroSpec(id || '') };
   if (opts.portrait) { spec.arms = 'down'; spec.weapon = null; }
@@ -610,31 +632,134 @@ export function makeHero(id, factionColor, opts = {}) {
   if (spec.cape === undefined) spec.cape = new THREE.Color(factionColor).multiplyScalar(0.7).getHex();
   const root = new THREE.Group();
   const body = new THREE.Group(); root.add(body);
+  const rig = { hlegs: [], kind: animKind(spec.weapon), mounted: mount === 'horse', pose };
   // 坐騎
-  if (mount === 'horse') { const HB = new THREE.Group(); const B = new Builder(1); buildHorse(B, { cloth: spec.cape ?? factionColor, ...spec.horse }); HB.add(groupFrom(B)); body.add(HB); }
+  if (mount === 'horse') {
+    const R = new Rig(1), B = new Builder(1);
+    buildHorse(B, { cloth: spec.cape ?? factionColor, ...spec.horse }, R);
+    body.add(groupFrom(B));
+    for (let i = 0; i < 4; i++) { const p = R.parts['hleg' + i]; const g = new THREE.Group(); g.position.copy(p.pivot); g.add(groupFrom(p.b)); body.add(g); rig.hlegs.push(g); }
+  }
   if (mount === 'cart') { const B = new Builder(1); buildCart(B); body.add(groupFrom(B)); }
   // 人
-  const B = new Builder(1);
   const off = pose === 'ride' ? 0.62 : pose === 'sit' ? -0.13 : 0;
-  B.base = M([0, off, pose === 'sit' ? 0.05 : 0]);
-  const hands = buildHuman(B, spec, pose);
-  for (const m of weaponPlacement(spec.weapon, hands, pose)) {
-    const W = new Builder(1); W.base = B.base.clone().multiply(m);
-    buildWeapon(W, spec.weapon, spec);
-    for (const k in W.b) (B.b[k] ||= []).push(...W.b[k]);
-  }
-  if (spec.weapon === 'bow' || spec.quiver) B.cyl('leather', 0x4a2e18, 0.06, 0.06, 0.5, 8, M([0.12, 1.35 + off, 0.2], [0.3, 0, 0.2]));
+  const rider = new THREE.Group(); rider.position.set(0, off, pose === 'sit' ? 0.05 : 0); body.add(rider);
+  const R = new Rig(1), B = new Builder(1);
+  const hands = buildHuman(B, spec, pose, R);
+  for (const { m, hand } of weaponPlacementH(spec.weapon, hands, pose)) R.addInto('arm' + hand, m, W => buildWeapon(W, spec.weapon, spec));
+  if (spec.weapon === 'bow' || spec.quiver) B.cyl('leather', 0x4a2e18, 0.06, 0.06, 0.5, 8, M([0.12, 1.35, 0.2], [0.3, 0, 0.2]));
   if (spec.armored && pose !== 'stand' && spec.weapon !== 'sword') {
-    // 佩劍
-    const W = new Builder(1); W.base = M([-0.24, 0.98 + off, 0.05], [1.9, 0, 0.2]); buildWeapon(W, 'sword');
+    const W = new Builder(1); W.base = M([-0.24, 0.98, 0.05], [1.9, 0, 0.2]); buildWeapon(W, 'sword');
     for (const k in W.b) (B.b[k] ||= []).push(...W.b[k]);
   }
-  const rider = groupFrom(B);
-  body.add(rider);
+  rider.add(groupFrom(B));
+  for (const name of ['armR', 'armL', 'legL', 'legR']) {
+    const p = R.parts[name]; if (!p) continue;
+    const g = new THREE.Group(); g.position.copy(p.pivot); g.add(groupFrom(p.b)); rider.add(g); rig[name] = g;
+  }
+  rig.riderY = off;
   root.userData.body = body;
   root.userData.rider = rider;
   root.userData.spec = spec;
+  root.userData.rig = rig;
   return root;
+}
+
+// —— 動作 ——
+export function animKind(w) {
+  if (['spear', 'silverSpear', 'snake', 'ji'].includes(w)) return 'spear';
+  if (['guandao', 'dao', 'axe'].includes(w)) return 'pole';
+  if (w === 'bow') return 'archer';
+  if (w === 'fan') return 'fan';
+  return 'inf';
+}
+const _P = { aR: [0, 0, 0], aL: [0, 0, 0], lL: 0, lR: 0, h: [0, 0, 0, 0], lunge: 0, bob: 0, lean: 0 };
+const smooth = (x) => x * x * (3 - 2 * x);
+// kind：inf / spear / pole / archer / cav / fan；act：idle walk run fight shoot rout talk raise
+// ph：步伐相位（依移動距離推進），t：攻擊節奏時間
+export function poseAngles(kind, act, ph, t, mounted, out = { aR: [0, 0, 0], aL: [0, 0, 0], h: [0, 0, 0, 0] }) {
+  out.aR[0] = out.aR[1] = out.aR[2] = 0; out.aL[0] = out.aL[1] = out.aL[2] = 0;
+  out.lL = out.lR = 0; out.lunge = 0; out.bob = 0; out.lean = 0;
+  for (let i = 0; i < 4; i++) out.h[i] = 0;
+  const s = Math.sin(ph);
+  const moving = act === 'walk' || act === 'run' || act === 'rout';
+  if (!mounted) {
+    if (moving) {
+      const A = act === 'walk' ? 0.5 : 0.8;
+      out.lL = A * s; out.lR = -A * s;
+      out.aL[0] = -0.35 * A * s * (kind === 'archer' ? 0.3 : 1);
+      out.aR[0] = 0.25 * A * s * (kind === 'inf' ? 1 : 0.3);
+      out.bob = Math.abs(Math.cos(ph)) * (act === 'walk' ? 0.05 : 0.09);
+      if (act !== 'walk') out.lean = -0.18;
+    } else {
+      out.bob = Math.sin(t * 1.6) * 0.008;
+      out.aL[0] = Math.sin(t * 1.6) * 0.02;
+    }
+  } else {
+    // 戰馬步伐：前後腿交錯
+    const A = act === 'walk' ? 0.32 : moving ? 0.72 : 0;
+    const offs = [0, 0.55, Math.PI, Math.PI + 0.55];
+    for (let i = 0; i < 4; i++) out.h[i] = A * Math.sin(ph + offs[i]);
+    out.bob = moving ? Math.abs(Math.sin(ph)) * (act === 'walk' ? 0.06 : 0.16) : 0;
+    if (act === 'rout') out.lean = -0.25;
+  }
+  if (act === 'fight') {
+    const c = (t % 1 + 1) % 1;
+    if (!mounted) { out.lL = 0.28; out.lR = -0.22; }
+    if (kind === 'spear' || kind === 'cav') {
+      // 突刺
+      let k;
+      if (c < 0.5) k = -smooth(c / 0.5) * 0.5; else if (c < 0.62) k = -0.5 + smooth((c - 0.5) / 0.12) * 1.1; else k = 0.6 - smooth((c - 0.62) / 0.38) * 0.6;
+      out.aR[0] = k * 0.7; out.aL[0] = k * 0.6;
+      out.lunge = Math.max(0, k) * 0.55;
+    } else if (kind === 'pole') {
+      // 大刀橫掃
+      let k;
+      if (c < 0.45) k = smooth(c / 0.45); else if (c < 0.62) k = 1 - smooth((c - 0.45) / 0.17) * 2; else k = -1 + smooth((c - 0.62) / 0.38);
+      out.aR[1] = k * 0.9; out.aR[0] = 0.3 + Math.abs(k) * 0.4; out.aL[1] = k * 0.7; out.aL[0] = 0.3;
+      out.lean = -k * 0.08;
+    } else if (kind === 'archer') {
+      let k; if (c < 0.5) k = -smooth(c / 0.5) * 1.3; else if (c < 0.62) k = -1.3 + smooth((c - 0.5) / 0.12) * 2.2; else k = 0.9 - smooth((c - 0.62) / 0.38) * 0.9;
+      out.aR[0] = k; out.lunge = Math.max(0, k) * 0.2;
+    } else {
+      // 揮砍：舉劍 → 下劈
+      let k;
+      if (c < 0.45) k = -smooth(c / 0.45) * 1.6; else if (c < 0.6) k = -1.6 + smooth((c - 0.45) / 0.15) * 2.5; else k = 0.9 - smooth((c - 0.6) / 0.4) * 0.9;
+      out.aR[0] = k; out.aR[2] = -Math.min(0, k) * -0.25;
+      out.aL[0] = 0.45; out.lunge = Math.max(0, k) * 0.3; out.lean = Math.max(0, k) * 0.12;
+    }
+  } else if (act === 'shoot') {
+    // 拉弓：右手後拉，放箭
+    const c = (t % 1 + 1) % 1;
+    const draw = c < 0.7 ? smooth(c / 0.7) : 1 - smooth((c - 0.7) / 0.08 > 1 ? 1 : (c - 0.7) / 0.08);
+    out.aR[1] = draw * 0.7; out.aR[0] = -draw * 0.15;
+    out.aL[0] = 0.12;
+    out.lean = draw * 0.05;
+  } else if (act === 'talk') {
+    out.aR[0] = 0.35 + Math.sin(t * 2.6) * 0.18; out.aR[2] = Math.sin(t * 1.3) * 0.08;
+  } else if (act === 'raise') {
+    out.aR[0] = 2.5; out.aR[2] = 0.2;
+  }
+  if (kind === 'fan' && act !== 'fight') { out.aR[2] += Math.sin(t * 1.4) * 0.1; }
+  return out;
+}
+
+// 套用到武將模型
+const _pa = { aR: [0, 0, 0], aL: [0, 0, 0], h: [0, 0, 0, 0] };
+export function animateHero(hero, act, ph, t) {
+  const rig = hero.userData.rig; if (!rig) return;
+  const p = poseAngles(rig.kind, act, ph, t, rig.mounted, _pa);
+  if (rig.armR) rig.armR.rotation.set(p.aR[0], p.aR[1], p.aR[2]);
+  if (rig.armL) rig.armL.rotation.set(p.aL[0], p.aL[1], p.aL[2]);
+  if (rig.legL) rig.legL.rotation.x = p.lL;
+  if (rig.legR) rig.legR.rotation.x = p.lR;
+  rig.hlegs.forEach((g, i) => g.rotation.x = p.h[i]);
+  const rider = hero.userData.rider;
+  rider.position.y = rig.riderY + (rig.mounted ? p.bob : 0);
+  rider.position.z = -p.lunge * 0.4;
+  rider.rotation.x = p.lean;
+  if (!rig.mounted) hero.userData.body.position.y = p.bob;
+  else hero.userData.body.position.y = p.bob * 0.4;
 }
 
 // —— 頭像（離屏渲染） ——
@@ -710,9 +835,15 @@ export function openViewer(container, id, factionColor) {
   el.onpointerdown = (e) => { drag = e.clientX; el.setPointerCapture(e.pointerId); };
   el.onpointermove = (e) => { if (drag != null) { ang -= (e.clientX - drag) * 0.01; drag = e.clientX; } };
   el.onpointerup = () => { drag = null; };
+  const acts = ['idle', 'fight', 'walk', 'fight', 'run'];
+  let t0 = performance.now(), ph = 0;
   function loop() {
     if (!alive) return;
     if (drag == null) ang += 0.006;
+    const tt = (performance.now() - t0) / 1000;
+    const act = acts[Math.floor(tt / 3) % acts.length];
+    ph += (act === 'run' ? 0.25 : act === 'walk' ? 0.12 : 0);
+    animateHero(hero, act === 'walk' && mounted ? 'walk' : act, ph, tt);
     const r = mounted ? 6.2 : 3.9, ty = mounted ? 1.25 : 1.0;
     cam.position.set(Math.sin(ang) * r, ty + 0.6, Math.cos(ang) * r); cam.lookAt(0, ty, 0);
     camLight.position.copy(cam.position).add(V(1, 2, 0));
@@ -739,6 +870,50 @@ const TROOP_STYLE = {
   jingnan: { armor: 0x5a6068, head: 'helmet', plume: 'tint', shield: 'round' },
   shixie: { armor: 0x7a6050, head: 'headband', shield: 'oval' },
 };
+// 批次士兵：拆成可動部位，每個部位分 tint（勢力色）與 base
+export function soldierRig(type, faction = 'wei', weapons = []) {
+  const st = TROOP_STYLE[faction] || TROOP_STYLE.wei;
+  const B = new Builder(0), R = new Rig(0);
+  const head = type === 'archer' ? (st.archerHead || (st.head === 'helmet' ? 'headband' : st.head)) : st.head;
+  const spec = {
+    tint: true, armored: !st.bare, bare: !!st.bare, skin: st.skin, armor: st.armor, cloth: 0xffffff, head, bandColor: 0x3a2a1a,
+    plume: (type === 'cav' || type === 'spear') && st.plume !== null ? 1 : null, beard: null,
+    arms: type === 'spear' ? 'spear' : type === 'archer' ? 'bow' : 'weapon',
+  };
+  const mounted = type === 'cav';
+  const pose = mounted ? 'ride' : 'stand';
+  const off = mounted ? 0.62 : 0;
+  const HB = new Builder(0), HR = new Rig(0);
+  if (mounted) buildHorse(HB, { tint: true, color: [0x6b4428, 0x3a2a1e, 0x8a6440][faction.length % 3], barding: weapons.includes('armor') ? st.barding || 0x4a4a4a : null }, HR);
+  const hands = buildHuman(B, spec, pose, R);
+  if (typeof st.plume === 'number' && (type === 'cav' || type === 'spear')) B.cone('cloth', st.plume, 0.055, 0.24, 6, M([0, 1.725 + 0.36, 0.03], [0.25, 0, 0]));
+  const crossbow = type === 'archer' && weapons.includes('crossbow');
+  const wtype = mounted || type === 'spear' ? 'spear' : type === 'archer' ? (crossbow ? 'crossbow' : 'bow') : (faction === 'nanman' || faction === 'wu' ? 'dao1' : 'sword');
+  if (wtype === 'crossbow') {
+    R.addInto('armL', M(), W => { W.box('wood', 0x4a3020, 0.06, 0.06, 0.6, M([0.05, 1.3, -0.36])); W.add('wood', new THREE.TorusGeometry(0.28, 0.014, 4, 8, 2.2), 0x3a2414, M([0.05, 1.3, -0.6], [Math.PI / 2, 0, Math.PI - 1.1])); });
+  } else if (wtype === 'dao1') {
+    R.addInto('armR', M([hands.R.x, hands.R.y, hands.R.z], [-0.9, 0, 0.1]), W => { W.box('steel', 0xd4d8de, 0.06, 0.62, 0.01, M([0.02, 0.42, 0])); W.box('gold', 0x8a6a2a, 0.1, 0.03, 0.04, M([0, 0.1, 0])); });
+  } else {
+    for (const { m, hand } of weaponPlacementH(wtype, hands, wtype === 'spear' ? 'ride' : 'stand')) R.addInto('arm' + hand, m, W => buildWeapon(W, wtype, { tassel: 0xc02020 }));
+  }
+  if (type === 'inf') {
+    R.addInto('armL', M(), W => {
+      if (st.shield === 'oval') W.sph('tint', 0xcfc0a0, 0.3, M([-0.36, 1.1, -0.24], [0, 0, 0.2], [0.18, 1.3, 0.85]), 10, 8);
+      else { W.cyl('tint', 0xdddddd, 0.26, 0.26, 0.04, 12, M([-0.36, 1.1, -0.24], [Math.PI / 2, 0, 0.25])); W.cyl('metal', 0xb8a060, 0.06, 0.06, 0.06, 8, M([-0.37, 1.1, -0.27], [Math.PI / 2, 0, 0.25])); }
+    });
+  }
+  if (type === 'archer') B.cyl('leather', 0x4a2e18, 0.06, 0.06, 0.5, 6, M([0.12, 1.32, 0.2], [0.3, 0, 0.2]));
+  const split = (bld) => { const g = bld.merged(); const tint = g.tint || null; delete g.tint; const rest = Object.values(g); return { tint, base: rest.length ? mergeGeometries(rest) : null }; };
+  const parts = [];
+  parts.push({ name: 'torso', pivot: V(0, off, 0), rider: true, ...split(B) });
+  for (const name of ['armR', 'armL', 'legL', 'legR']) { const p = R.parts[name]; if (p) parts.push({ name, pivot: p.pivot.clone().add(V(0, off, 0)), rider: true, ...split(p.b) }); }
+  if (mounted) {
+    parts.push({ name: 'horse', pivot: V(0, 0, 0), ...split(HB) });
+    for (let i = 0; i < 4; i++) { const p = HR.parts['hleg' + i]; parts.push({ name: 'hleg' + i, idx: i, pivot: p.pivot.clone(), ...split(p.b) }); }
+  }
+  return parts;
+}
+
 export function soldierGeometry2(type, faction = 'wei', weapons = []) {
   const st = TROOP_STYLE[faction] || TROOP_STYLE.wei;
   const B = new Builder(0);

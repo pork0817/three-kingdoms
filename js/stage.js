@@ -1,7 +1,7 @@
 // 劇情舞台：宮殿、軍帳、戰場、城樓、江畔、寢宮、受禪台；人物站位、鏡頭與動作演出
 import * as THREE from 'three';
 import { GENERALS, FACTIONS } from './data.js';
-import { makeHero, NPC } from './figures.js';
+import { makeHero, NPC, animateHero } from './figures.js';
 import { makeBanner, waveBanner, treeGeometries } from './models.js';
 import { tween, ease, clamp, lerp, rand } from './util.js';
 import { Q } from './settings.js';
@@ -231,9 +231,11 @@ export class Stage {
         const [x, z] = arg; const from = o.position.clone();
         const yaw = Math.atan2(-(x - from.x), -(z - from.z));
         o.rotation.y = yaw;
-        const dur = Math.max(500, from.distanceTo(new THREE.Vector3(x, from.y, z)) * 450);
-        await tween(dur, (t) => { o.position.set(lerp(from.x, x, t), from.y + Math.abs(Math.sin(t * dur / 120)) * 0.06, lerp(from.z, z, t)); }, ease.linear);
-        o.position.y = from.y;
+        const dist = from.distanceTo(new THREE.Vector3(x, from.y, z));
+        const dur = Math.max(500, dist * 700);
+        a.anim = 'walk';
+        await tween(dur, (t) => { o.position.set(lerp(from.x, x, t), from.y, lerp(from.z, z, t)); a.ph = t * dist / 1.35 * Math.PI * 2; }, ease.linear);
+        a.anim = null;
         break;
       }
       case 'face': { const b = this.actors.get(arg); if (b) o.rotation.y = Math.atan2(-(b.obj.position.x - o.position.x), -(b.obj.position.z - o.position.z)); break; }
@@ -244,6 +246,7 @@ export class Stage {
       case 'lie': o.userData.lying = true; o.rotation.set(Math.PI / 2, 0, 0); o.position.set(arg?.[0] ?? 0, arg?.[1] ?? 0.85, arg?.[2] ?? 3.0); break;
       case 'fall': await tween(700, t => { o.rotation.x = t * Math.PI / 2; o.position.y = -t * 0.2; }, ease.in); o.userData.lying = true; break;
       case 'shake': await tween(500, t => { o.rotation.z = Math.sin(t * 40) * 0.05 * (1 - t); }); break;
+      case 'raise': a.anim = 'raise'; await new Promise(r => setTimeout(r, 1400)); a.anim = null; break;
       case 'jump': await tween(500, t => { o.position.y = Math.sin(t * Math.PI) * 0.5; }); break;
       case 'leave': await this.act(id, 'walk', arg || [o.position.x * 3, -14]); this.scene.remove(o); this.actors.delete(id); break;
       case 'vanish': this.scene.remove(o); this.actors.delete(id); break;
@@ -290,6 +293,12 @@ export class Stage {
   update(dt) {
     this.time += dt;
     for (const b of this.banners || []) waveBanner(b, this.time);
+    for (const a of this.actors.values()) {
+      if (a.obj.userData.lying) continue;
+      const y = a.obj.position.y;
+      animateHero(a.obj, a.anim || (this.talking === a.id ? 'talk' : 'idle'), a.ph || 0, this.time + a.obj.id);
+      if (!a.anim && y < -0.1) a.obj.userData.body.position.y = 0;
+    }
     for (const f of this.fx) {
       if (f.dead) continue;
       if (f.t === 'flicker') f.l.intensity = f.base * (0.85 + Math.random() * 0.3);

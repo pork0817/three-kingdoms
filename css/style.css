@@ -323,3 +323,6 @@ button { font-family: var(--font); }
   .city-label { font-size: 11px; } .city-label.s3 { font-size: 13px; }
   .faction-label { font-size: 40px; }
 }
+
+.skip-btn { position: absolute; right: 18px; bottom: 18px; z-index: 55; }
+.squad-label .bark { font-size: 12px; padding: 4px 9px; margin-bottom: 4px; white-space: nowrap; max-width: none; animation: tin .25s; }

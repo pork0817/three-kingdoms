@@ -252,8 +252,8 @@ function updateCityPanel(id) {
         <button class="btn small" data-a="gov">任命太守</button>
       </div>`;
   } else {
-    const gens = state.availableGenerals(owner).sort((a, b) => GENERALS[b].lead - GENERALS[a].lead).slice(0, 3).map(gname).join('、');
-    html += `<div class="row"><span>守軍</span><span>約 ${fmt(state.garrison[id])}${state.siege[id] ? `（被圍 ${state.siege[id]} 季）` : ''}</span></div><div class="gens">守將：${gens || '無名之將'}</div>
+    const gens = (state.cityGenerals()[id] || []).map(gname).join('、');
+    html += `<div class="row"><span>守軍</span><span>約 ${fmt(state.garrison[id])}${state.siege[id] ? `（被圍 ${state.siege[id]} 季）` : ''}</span></div>${gens ? `<div class="gens">守將：${gens}</div>` : ''}
       <div class="row"><span>關係</span><span>${FACTIONS[owner].major ? relText(state.getRel(state.faction, owner)) : '—'}${state.ally[owner] ? '・同盟' : ''}${(state.truce[owner] || 0) > state.stamp() ? '・停戰' : ''}</span></div>
       <div class="gens">相鄰：${nb}</div>`;
   }
@@ -458,7 +458,7 @@ async function enterStage(kind, fac, actors) {
   for (const [id, x, z, yaw, y] of actors || []) stage.addActor(id, x, z, (yaw || 0) + Math.PI, { y: y || 0 });
   app.setView(stage); map.setActive(false);
   showHUD(false);
-  DLG.hook = (sp) => { if (inStage) { if (sp && sp !== 'narr') { stage.ensure(sp); stage.shot(sp); } else stage.wide(); } };
+  DLG.hook = (sp) => { if (inStage) { stage.talking = sp; if (sp && sp !== 'narr') { stage.ensure(sp); stage.shot(sp); } else stage.wide(); } };
   stage.wide(10);
   if (!inStage) fade(false);
   inStage = true;
@@ -589,8 +589,14 @@ function campaignBattle(target, attackerF, defenderF, playerAttacks, opts = {}) 
   const elev = heightAtXZ(x, z);
   const terrain = opts.field ? (elev > 3.5 ? 'mountain' : 'plains') : (c.size >= 2 ? 'siege' : (elev > 3.5 ? 'mountain' : 'plains'));
   const enemyF = playerAttacks ? defenderF : attackerF;
-  const gens = state.availableGenerals(enemyF).sort((a, b) => (GENERALS[b].war + GENERALS[b].lead + GENERALS[b].int) - (GENERALS[a].war + GENERALS[a].lead + GENERALS[a].int));
-  const top = gens.slice(0, 6);
+  let top;
+  if (playerAttacks) top = state.cityGenerals()[target] || [];
+  else {
+    // 來犯敵軍：由出發城的守將率領
+    const cg = state.cityGenerals();
+    const src = neighbors(target).filter(n => state.owners[n] === enemyF).sort((a, b) => (cg[b]?.length || 0) - (cg[a]?.length || 0))[0];
+    top = (cg[src] || []).slice(0, 3);
+  }
   const allT = Object.keys(TACTICS).filter(t => !['ambush', 'fireship', 'raid'].includes(t));
   const tactics = [...new Set([pick(allT), pick(allT), 'drum', 'volley'])];
   const troops = playerAttacks ? state.garrison[target] : Math.round((18000 + Math.random() * 14000 + (state.year - 208) * 500) * state.D.ai);

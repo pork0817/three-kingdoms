@@ -135,6 +135,20 @@ export class GameState {
     const taken = new Set([...this.prisoners, ...this.dead, ...this.generals]);
     return Object.keys(GENERALS).filter(id => !taken.has(id) && (this.gfac[id] ?? factionAt(id, this.year)) === f && GENERALS[id].life[0] + 16 <= this.year);
   }
+  // 各城守將：每位武將只守一座城（都城、大城優先分配強將）
+  cityGenerals() {
+    const out = {};
+    for (const f of Object.keys(FACTIONS)) {
+      if (f === this.faction) continue;
+      const cities = this.citiesOf(f).sort((a, b) => (b === FACTIONS[f].capital) - (a === FACTIONS[f].capital) || CITIES[b].size - CITIES[a].size);
+      if (!cities.length) continue;
+      const gens = this.availableGenerals(f).sort((a, b) => (GENERALS[b].war + GENERALS[b].lead + GENERALS[b].int) - (GENERALS[a].war + GENERALS[a].lead + GENERALS[a].int));
+      for (const c of cities) out[c] = [];
+      let i = 0;
+      for (let round = 0; round < 3 && i < gens.length; round++) for (const c of cities) { if (i >= gens.length) break; if (round < CITIES[c].size + 1) out[c].push(gens[i++]); }
+    }
+    return out;
+  }
   freeGenerals() {
     const taken = new Set([...this.prisoners, ...this.dead, ...this.generals]);
     return Object.keys(GENERALS).filter(id => !taken.has(id) && (this.gfac[id] ?? factionAt(id, this.year)) === 'free' && GENERALS[id].life[0] + 16 <= this.year);
