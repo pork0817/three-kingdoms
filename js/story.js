@@ -1,3 +1,4 @@
+import { WEI_EARLY, WEI_LATE, SHU_EARLY, SHU_LATE, WU_EARLY, WU_LATE } from './story_early.js';
 // 主線劇情：大部分依據《三國志》史實，玩家的選擇會改變之後的發展
 // 步驟格式：
 //  ['title', 主標, 副標]  ['cam', 城池id, 距離]  ['overview']  ['narr', 文字]  ['say', 說話者, 文字]
@@ -6,7 +7,8 @@
 
 const T = (t, hint, fx, extra = {}) => ({ t, hint, fx, ...extra });
 const H = (t, hint, fx, extra = {}) => ({ t, hint, fx, hist: true, ...extra });
-const ENDING = ['narr', '至此，三國鼎立之勢已成。然天下大勢，分久必合——主公，接下來的天下，由你親手書寫！（可在地圖上點選敵方城池出兵，一統天下）'];
+const ENDING = ['ending'];
+const P = Math.PI;
 
 // ════════════════════════════ 魏 ════════════════════════════
 const WEI = [
@@ -14,8 +16,22 @@ const WEI = [
     title: '魏王受禪', year: 220, steps: [
       ['title', '第一章　魏王受禪', '建安二十五年（西元220年）'],
       ['cam', 'luoyang', 50],
-      ['narr', '建安二十五年正月，魏王曹操薨於洛陽，享年六十六。世子曹丕嗣位為魏王、丞相。'],
+      ['if', S => S.isAlive('caocao'), [
+        ['stage', 'chamber', 'wei', [['caopi', -1.8, 3, P / 2], ['simayi', 2.4, 1, -P * 0.3]]],
+        ['act', 'caocao', 'lie'],
+        ['say', 'caocao', '天下尚未安定，未得遵古也。葬畢，皆除服。其將兵屯戍者，皆不得離屯部……'],
+        ['act', 'caopi', 'kneel'],
+        ['effect', 'lightsOut'],
+        ['narr', '建安二十五年正月，魏王曹操薨於洛陽，享年六十六。世子曹丕嗣位為魏王、丞相。'],
+        ['fx', S => S.lose('caocao', '病逝於洛陽')],
+      ], [['narr', '曹丕嗣位為魏王、丞相。']]],
+      ['stage', 'altar', 'wei', [['漢獻帝', 0, 9.6, P, 3.6], ['caopi', 0, -1, 0], ['simayi', -3, -2, 0.3], ['caoren', 3, -2, -0.3]]],
+      ['say', '漢獻帝', '咨爾魏王：昔者帝堯禪位於虞舜，舜亦以命禹。天命不于常，惟歸有德。天之曆數在爾躬，允執其中。'],
+      ['act', 'caopi', 'walk', [0, 3.2]],
+      ['act', '漢獻帝', 'bow'],
+      ['act', 'caopi', 'bow'],
       ['narr', '是年十月，漢獻帝於繁陽築受禪台，禪位於曹丕。曹丕即皇帝位，改元黃初，國號大魏。四百年漢祚，至此而終。'],
+      ['stage', 'palace', 'wei', [['caopi', 0, 7.5, P], ['陳群', -2.6, 3, P * 0.6], ['simayi', 2.6, 3, -P * 0.6]]],
       ['say', 'caopi', '先王櫛風沐雨，掃平北方。今朕受天命，當使天下歸於一統。眾卿有何良策？'],
       ['say', '陳群', '陛下，自漢末以來，選士無度。臣請立九品官人之法，於州郡設中正，品評人物，以定仕途。'],
       ['say', 'simayi', '九品之法可收士族之心；然先帝「唯才是舉」，寒門英傑亦多賴此出頭。願陛下斟酌。'],
@@ -141,8 +157,8 @@ const WEI = [
       ]],
       ['battle', S => ({
         name: '陳倉之戰', sub: '郝昭 vs 諸葛亮', terrain: 'siege', attacker: 'enemy', cityName: '陳倉', gateHP: 5000,
-        playerLeader: 'haozhao', maxTroops: 9000, playerMorale: S.flags.oath ? 120 : 100,
-        enemy: { faction: 'shu', leader: 'zhugeliang', generals: ['zhugeliang', 'weiyan', 'wuban'], troops: 30000, weapons: ['ladder', 'ram', 'catapult'],
+        playerLeader: 'haozhao', maxTroops: 12000, playerMorale: S.flags.oath ? 120 : 100,
+        enemy: { faction: 'shu', leader: 'zhugeliang', generals: ['zhugeliang', 'weiyan', 'wuban'], troops: 26000, weapons: ['ladder', 'ram', 'catapult'],
           tactics: ['volley', 'drum', 'fire'], comp: { inf: 0.35, spear: 0.25, cav: 0.05, archer: 0.35 } },
         reinforce: S.flags.cReinf ? { side: 'p', at: 70, troops: 14000, general: 'zhanghe', types: ['cav', 'inf'] } : null,
         noSurrender: true, timeLimit: 300,
@@ -213,21 +229,34 @@ const SHU = [
       ['title', '第一章　昭烈稱帝', '章武元年（西元221年）'],
       ['cam', 'chengdu', 45],
       ['narr', '建安二十五年，曹丕篡漢自立。消息傳至成都，謠傳漢帝已遇害。'],
+      ['stage', 'palace', 'shu', [['liubei', 0, 7.5, P], ['zhugeliang', -2.6, 3, P * 0.6], ['zhaoyun', 2.6, 3, -P * 0.6], ['zhangfei', 3.4, 0.5, -P * 0.6]]],
       ['narr', '章武元年四月，漢中王劉備於成都武擔山之南即皇帝位，國號仍為「漢」，史稱蜀漢。'],
-      ['say', 'liubei', '朕與雲長、翼德，誓同生死。今雲長為東吳所害，此仇不報，朕何以為人！'],
-      ['narr', '六月，正當劉備整軍東征之際，車騎將軍張飛於閬中為部將范彊、張達所殺，二人攜張飛首級投奔東吳。'],
-      ['fx', S => S.lose('zhangfei', '遇害')],
-      ['say', 'liubei', '噫！飛死矣……'],
-      ['say', 'zhaoyun', '陛下！國賊是曹操，非孫權也。若先滅魏，則吳自服。今曹丕篡漢，當順應眾心，早圖關中，不應置魏而先與吳戰！'],
-      ['choice', '朕意如何？', [
-        H('為二弟報仇，御駕親征伐吳', '將士同仇敵愾：兵力 +10000；進入夷陵之戰', S => { S.flag('eastern'); S.addTroops(10000); }),
-        T('納趙雲之諫，聯吳伐魏', '改寫歷史：與東吳修好，北伐關中；名望 +10、習得【誘敵深入】', S => { S.flag('allyWu'); S.addRenown(10); S.learn('feint'); }),
+      ['if', S => S.dead.includes('guanyu'), [
+        ['say', 'liubei', '朕與雲長、翼德，誓同生死。今雲長為東吳所害，此仇不報，朕何以為人！'],
+        ['if', S => S.isAlive('zhangfei'), [
+          ['narr', '六月，正當劉備整軍東征之際，車騎將軍張飛於閬中為部將范彊、張達所殺，二人攜張飛首級投奔東吳。'],
+          ['act', 'zhangfei', 'vanish'],
+          ['fx', S => S.lose('zhangfei', '遇害')],
+          ['say', 'liubei', '噫！飛死矣……'],
+        ]],
+        ['say', 'zhaoyun', '陛下！國賊是曹操，非孫權也。若先滅魏，則吳自服。今曹丕篡漢，當順應眾心，早圖關中，不應置魏而先與吳戰！'],
+        ['choice', '朕意如何？', [
+          { t: '為二弟報仇，御駕親征伐吳', hint: '將士同仇敵愾：兵力 +10000；進入夷陵之戰', hist: true, fx: S => { S.flag('eastern'); S.addTroops(10000); } },
+          { t: '納趙雲之諫，聯吳伐魏', hint: '改寫歷史：與東吳修好，北伐關中；名望 +10、習得【誘敵深入】', fx: S => { S.flag('allyWu'); S.addRenown(10); S.learn('feint'); } },
+        ]],
+        ['note', '史實上劉備不聽趙雲、秦宓等人勸諫，親率大軍東征，結果在夷陵之戰慘敗——這是蜀漢由盛轉衰的轉捩點。'],
+      ], [
+        ['say', 'liubei', '雲長鎮守荊州，翼德屯兵閬中，子龍、孔明皆在左右。桃園之誓，猶在眼前。'],
+        ['say', 'zhugeliang', '陛下，曹丕篡逆，天下共憤。宜與東吳共約，東西並進，北伐中原。'],
+        ['choice', '天下大計？', [
+          { t: '與東吳結盟，北伐曹魏', hint: '與吳關係 +20；名望 +10', fx: S => { S.flag('allyWu'); S.addRel('shu', 'wu', 20); S.addRenown(10); } },
+          { t: '趁東吳不備，東征奪取江東', hint: '進入夷陵之戰', fx: S => { S.flag('eastern'); S.addTroops(6000); } },
+        ]],
       ]],
-      ['note', '史實上劉備不聽趙雲、秦宓等人勸諫，親率大軍東征，結果在夷陵之戰慘敗——這是蜀漢由盛轉衰的轉捩點。'],
     ],
   },
   {
-    title: '夷陵之戰', year: 222, requires: S => S.flags.eastern, steps: [
+    title: '夷陵之戰', year: 222, requires: S => S.flags.eastern && S.alive('wu'), steps: [
       ['title', '第二章　夷陵之戰', '章武二年（西元222年）'],
       ['march', 'yongan', 'yiling', 'shu'],
       ['cam', 'yiling', 40],
@@ -260,11 +289,14 @@ const SHU = [
         ['fx', S => { S.lose('maliang', '戰死'); S.lose('huangquan', '被迫降魏'); }],
       ]],
       ['title', '白帝託孤', '章武三年（西元223年）'],
-      ['cam', 'yongan', 35],
+      ['stage', 'chamber', 'shu', [['zhugeliang', 1.8, 3.2, -P / 2], ['zhaoyun', -2.4, 1, P * 0.3], ['劉禪', 2.6, 1.2, -P * 0.3]]],
+      ['act', 'liubei', 'lie'],
       ['if', S => S.flags.yilingWin, [['narr', '雖然大勝，劉備卻因連年征戰，積勞成疾，病倒於永安宮。']], [['narr', '劉備羞憤交加，一病不起，病倒於永安宮。']]],
       ['say', 'liubei', '君才十倍曹丕，必能安國，終定大事。若嗣子可輔，輔之；如其不才，君可自取。'],
+      ['act', 'zhugeliang', 'kneel'],
       ['say', 'zhugeliang', '（涕泣）臣敢竭股肱之力，效忠貞之節，繼之以死！'],
       ['say', 'liubei', '勿以惡小而為之，勿以善小而不為。惟賢惟德，能服於人……'],
+      ['effect', 'lightsOut'],
       ['narr', '章武三年四月，劉備崩於永安宮，年六十三。太子劉禪即位，諸葛亮受遺詔輔政。'],
       ['fx', S => S.lose('liubei', '駕崩')],
       ['choice', '丞相諸葛亮如何處理對吳關係？', [
@@ -323,6 +355,8 @@ const SHU = [
           ['say', 'menghuo', '我不服！此乃中了你的詭計！若放我回去，整頓兵馬再戰，必能勝你！'],
           ['say', 'zhugeliang', '（笑）好，放你回去。'],
           ['narr', '孟獲屢敗屢戰，先後被擒七次，諸葛亮皆釋之。第七次被擒時，孟獲不肯離去。'],
+          ['stage', 'field', 'shu', [['zhugeliang', 0, 5, P], ['menghuo', 0, 1, 0], ['zhurong', -2, 0.5, 0.3]]],
+          ['act', 'menghuo', 'kneel'],
           ['say', 'menghuo', '丞相天威也！南人不復反矣！'],
           ['fx', S => { S.recruit('menghuo'); S.recruit('zhurong'); S.addTroops(10000, '南中精兵'); S.addRenown(15); }],
           ['owner', 'jianning', 'shu'],
@@ -471,7 +505,12 @@ const SHU = [
         ['owner', 'changan', 'shu'],
         ['say', 'zhugeliang', '先帝……漢室，可興矣。'],
       ], [
-        ['narr', '八月，諸葛亮病逝於五丈原軍中，年五十四。'],
+        ['stage', 'night', 'shu', [['jiangwei', -2.6, 2.5, P * 0.75], ['楊儀', 2.6, 2.5, -P * 0.75]]],
+        ['act', 'zhugeliang', 'lie', [0, 0.1, 3.0]],
+        ['say', 'zhugeliang', '……悠悠蒼天，曷此其極。'],
+        ['effect', 'star'],
+        ['effect', 'lightsOut'],
+        ['narr', '是夜，有赤星自東北西南流，投於亮營，三投再還。八月，諸葛亮病逝於五丈原軍中，年五十四。'],
         ['fx', S => S.lose('zhugeliang', '病逝五丈原')],
         ['narr', '姜維遵遺命，反旗鳴鼓，司馬懿疑有伏兵而退——「死諸葛走生仲達」。'],
         ['note', '杜甫〈蜀相〉：「出師未捷身先死，長使英雄淚滿襟。」'],
@@ -486,10 +525,13 @@ const WU = [
   {
     title: '江東之主', year: 221, steps: [
       ['title', '第一章　江東之主', '黃初二年（西元221年）'],
-      ['cam', 'jiangling', 55],
-      ['narr', '建安二十四年，呂蒙白衣渡江，襲取荊州。關羽敗走麥城被擒，為吳所斬。東吳盡有荊州之地。'],
       ['cam', 'jianye', 45],
-      ['narr', '黃初二年，劉備稱帝於成都，為報關羽之仇，傾國東征。孫權遣諸葛瑾求和，劉備不許。'],
+      ['narr', '建安二十五年，曹丕篡漢稱帝。次年，劉備亦於成都稱帝。'],
+      ['if', S => S.flags.killedGY || S.dead.includes('guanyu'), [
+        ['narr', '劉備為報關羽之仇，傾國東征。孫權遣諸葛瑾求和，劉備不許。'],
+      ], [
+        ['narr', '關羽仍鎮守荊州，吳蜀之間暫時相安無事，然北方曹丕虎視眈眈。'],
+      ]],
       ['say', 'zhugejin', '主公，劉備盛怒而來，聲勢浩大。北方曹丕又虎視眈眈，我江東恐將兩面受敵。'],
       ['choice', '如何應對北方曹魏？', [
         H('遣使向曹丕稱臣，以穩北方', '魏國封孫權為吳王，暫不南侵；金 -500（貢品）', S => { S.flag('vassal'); S.addGold(-500); }),
@@ -506,7 +548,7 @@ const WU = [
     ],
   },
   {
-    title: '火燒連營', year: 222, steps: [
+    title: '火燒連營', year: 222, requires: S => (S.flags.killedGY || S.dead.includes('guanyu')) && S.alive('shu'), steps: [
       ['title', '第二章　火燒連營', '黃武元年（西元222年）'],
       ['march', 'yongan', 'yiling', 'shu'],
       ['cam', 'yiling', 40],
@@ -581,12 +623,13 @@ const WU = [
     title: '石亭之戰', year: 228, steps: [
       ['title', '第四章　石亭之戰', '黃武七年（西元228年）'],
       ['cam', 'wan2', 45],
+      ['stage', 'tent', 'wu', [['sunquan', 0, 6, P], ['zhoufang', 0, 1.5, P], ['luxun', -2.6, 2.5, P * 0.75]]],
       ['say', 'zhoufang', '主公，曹休貪功輕敵。臣願詐降於魏，誘曹休深入，伏兵擊之。為取信於曹休，臣……願斷髮為誓！'],
       ['choice', '是否採用周魴之計？', [
         H('准周魴之計，斷髮詐降', '曹休大軍將沿山道行軍；習得兵法【伏兵】', S => { S.flag('zf'); S.learn('ambush'); }),
         T('不必如此，正面迎敵', '援軍 +8000', S => S.addTroops(8000)),
       ]],
-      ['if', S => S.flags.zf, [['narr', '曹休果然中計，親率步騎十萬，直趨皖城。']]],
+      ['if', S => S.flags.zf, [['act', 'zhoufang', 'kneel'], ['effect', 'hair', 'zhoufang'], ['narr', '周魴詣郡門下，因下髮謝。曹休果然中計，親率步騎十萬，直趨皖城。']]],
       ['march', 'shouchun', 'wan2', 'wei'],
       ['battle', S => ({
         name: '石亭之戰', sub: '陸遜 vs 曹休', terrain: 'mountain', time: 'dusk', forest: 'sides',
@@ -637,7 +680,11 @@ const WU = [
   },
 ];
 
-export const STORY = { wei: WEI, shu: SHU, wu: WU };
+export const STORY = {
+  wei: [...WEI_EARLY, WEI[0], WEI[1], WEI_LATE.mengda, WEI[2], WEI[3], WEI[4], WEI[5]],
+  shu: [...SHU_EARLY, SHU[0], SHU[1], SHU[2], SHU[3], SHU[4], SHU[5], SHU_LATE.mumen, SHU[6]],
+  wu: [...WU_EARLY, WU[0], WU[1], WU[2], WU[3], WU_LATE.yizhou, WU[4]],
+};
 
 export function nextChapter(S) {
   const list = STORY[S.faction];

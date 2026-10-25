@@ -79,15 +79,20 @@ export function buildHuman(B, s, pose = 'stand') {
     else for (const sx of [-1, 1]) B.box('metal', armor, 0.2, 0.3, 0.3, M([sx * 0.2, 0.84, -0.06], [0, 0, sx * 0.35]));
   }
   // 軀幹
-  B.cyl(ck, cc, 0.205, 0.17, 0.52, 16, M([0, 1.26, 0], [0, 0, 0], [1, 1, 0.72]));
-  if (s.armored) {
-    B.cyl('metal', armor, 0.222, 0.19, 0.32, 16, M([0, 1.35, 0], [0, 0, 0], [1, 1, 0.78]));
+  const fat = s.fat ? 1.22 : 1;
+  if (s.bare) {
+    B.cyl('skin', skin, 0.215 * fat, 0.18 * fat, 0.52, 16, M([0, 1.26, 0], [0, 0, 0], [1, 1, 0.75]));
+    if (B.lod) for (const sx of [-1, 1]) B.sph('skin', new THREE.Color(skin).multiplyScalar(0.92).getHex(), 0.08, M([sx * 0.08, 1.38, -0.12], [0, 0, 0], [1, 0.7, 0.5]), 8, 6);
+    B.box(ck, cc, 0.06, 0.6, 0.02, M([0.05, 1.28, -0.16], [0, 0, 0.6]));
+  } else B.cyl(ck, cc, 0.205 * fat, 0.17 * fat, 0.52, 16, M([0, 1.26, 0], [0, 0, 0], [1, 1, 0.72 * (s.fat ? 1.15 : 1)]));
+  if (s.armored && !s.bare) {
+    B.cyl('metal', armor, 0.222 * fat, 0.19 * fat, 0.32, 16, M([0, 1.35, 0], [0, 0, 0], [1, 1, 0.78]));
     if (lod) {
       for (let i = 0; i < 4; i++) B.add('metal', new THREE.TorusGeometry(0.2 - i * 0.006, 0.008, 4, 16), new THREE.Color(armor).multiplyScalar(0.7).getHex(), M([0, 1.24 + i * 0.075, 0], [Math.PI / 2, 0, 0], [1, 0.78, 1]));
       // 護心鏡
       B.cyl('gold', trim, 0.065, 0.065, 0.02, 16, M([0, 1.37, -0.17], [Math.PI / 2, 0, 0]));
     }
-  } else if (lod) {
+  } else if (lod && !s.bare) {
     // 交領
     B.box(ck2, cc2, 0.05, 0.42, 0.02, M([0.06, 1.3, -0.15], [0, 0, 0.45]));
     B.box(ck2, cc2, 0.05, 0.42, 0.02, M([-0.06, 1.3, -0.15], [0, 0, -0.45]));
@@ -95,7 +100,7 @@ export function buildHuman(B, s, pose = 'stand') {
   B.add('gold', new THREE.TorusGeometry(0.185, 0.032, 5, B.s(18)), s.belt ?? 0x4a3020, M([0, 1.03, 0], [Math.PI / 2, 0, 0], [1, 0.74, 1]));
   if (lod) B.sph('gold', trim, 0.04, M([0, 1.03, -0.14], [0, 0, 0], [1, 1, 0.5]));
   // 肩甲
-  if (s.armored) for (const sx of [-1, 1]) {
+  if (s.armored && !s.bare) for (const sx of [-1, 1]) {
     B.sph('metal', armor, 0.13, M([sx * 0.26, 1.47, 0], [0, 0, -sx * 0.55], [1, 0.75, 1.05]), 12, 8, 0, Math.PI * 0.55);
     if (lod) B.sph('gold', trim, 0.03, M([sx * 0.3, 1.5, -0.02]));
   }
@@ -124,6 +129,10 @@ export function buildHuman(B, s, pose = 'stand') {
     B.sph('hair', hair, 0.13, M([0, 1.742, 0.01], [0.5, 0, 0]), 14, 10, 0, Math.PI * 0.55);
   }
   buildBeard(B, s, face);
+  if (s.eyepatch && lod) {
+    B.add('dark', new THREE.TorusGeometry(0.124, 0.008, 4, 16), 0x111111, M([0, 1.75, 0], [Math.PI / 2 - 0.25, 0, 0], [0.95, 1, 1]));
+    B.sph('dark', 0x141414, 0.03, M([-0.043, 1.742, -0.112], [0, 0, 0], [1.1, 1, 0.4]), 8, 6);
+  }
   buildHead(B, s, armor, trim);
   // 手臂
   const arms = ARM_POSES[s.arms || 'weapon'](pose);
@@ -131,8 +140,9 @@ export function buildHuman(B, s, pose = 'stand') {
   for (const side of ['R', 'L']) {
     const sx = side === 'R' ? 1 : -1;
     const sh = V(sx * 0.255, 1.46, 0.0), el = arms[side][0], wr = arms[side][1];
-    B.limb(ck, cc, sh, el, 0.062, 0.052, 10);
-    if (s.robe && !s.armored) {
+    B.limb(s.bare ? 'skin' : ck, s.bare ? skin : cc, sh, el, 0.066, 0.056, 10);
+    if (s.bare) B.limb('skin', skin, el, wr, 0.056, 0.046, 10);
+    else if (s.robe && !s.armored) {
       B.limb(ck, cc, el, wr, 0.06, 0.05, 10);
       B.add(ck, new THREE.CylinderGeometry(0.15, 0.065, 1, B.s(12), 1, true), cc, between(el.clone().lerp(wr, 0.25), wr.clone().add(wr.clone().sub(el).multiplyScalar(0.12))));
     } else {
@@ -156,7 +166,7 @@ export function buildHuman(B, s, pose = 'stand') {
 const ARM_POSES = {
   weapon: (pose) => ({ R: [V(0.36, 1.24, -0.1), V(0.33, 1.2, -0.36)], L: [V(-0.35, 1.24, -0.08), V(-0.24, 1.16, -0.34)] }),
   spear: (pose) => ({ R: [V(0.36, 1.24, -0.06), V(0.34, 1.2, -0.3)], L: [V(-0.3, 1.26, -0.18), V(-0.1, 1.28, -0.4)] }),
-  fan: (pose) => ({ R: [V(0.33, 1.22, -0.12), V(0.17, 1.38, -0.26)], L: [V(-0.33, 1.22, -0.1), V(-0.2, 1.12, -0.28)] }),
+  fan: (pose) => ({ R: [V(0.34, 1.2, -0.1), V(0.3, 1.16, -0.34)], L: [V(-0.33, 1.22, -0.1), V(-0.2, 1.12, -0.28)] }),
   twin: (pose) => ({ R: [V(0.37, 1.24, -0.12), V(0.36, 1.27, -0.38)], L: [V(-0.37, 1.24, -0.12), V(-0.36, 1.27, -0.38)] }),
   bow: (pose) => ({ R: [V(0.3, 1.28, -0.14), V(0.12, 1.4, -0.3)], L: [V(-0.3, 1.38, -0.28), V(-0.18, 1.42, -0.58)] }),
   down: (pose) => ({ R: [V(0.31, 1.2, 0.0), V(0.31, 0.96, -0.04)], L: [V(-0.31, 1.2, 0.0), V(-0.31, 0.96, -0.04)] }),
@@ -247,6 +257,15 @@ function buildHead(B, s, armor, trim) {
       const a = (i / ((B.lod ? 9 : 5) - 1) - 0.5) * 2.2;
       B.cone('cloth', cols[i % 4], 0.025, 0.36, 5, M([Math.sin(a) * 0.12, H + 0.25, Math.cos(a) * 0.06 + 0.02], [0.2 + Math.cos(a) * 0.2, 0, -a * 0.35]));
     }
+  } else if (hk === 'taoist') {
+    B.sph('hair', s.hair ?? 0x161210, 0.13, M([0, H + 0.015, 0.01], [0.5, 0, 0]), 14, 10, 0, Math.PI * 0.55);
+    B.sph('hair', s.hair ?? 0x161210, 0.06, M([0, H + 0.15, 0.0]));
+    B.box('gold', 0xd8b040, 0.1, 0.07, 0.1, M([0, H + 0.2, 0]));
+    B.cyl('gold', 0xd8b040, 0.006, 0.006, 0.2, 4, M([0, H + 0.2, 0], [0, 0, Math.PI / 2]));
+  } else if (hk === 'furhat') {
+    B.cyl('hair', s.hatColor ?? 0x6a4a2a, 0.14, 0.15, 0.14, 14, M([0, H + 0.1, 0.01]));
+    B.sph('hair', s.hatColor ?? 0x6a4a2a, 0.14, M([0, H + 0.16, 0.01]), 12, 8, 0, Math.PI / 2);
+    B.add('hair', new THREE.TorusGeometry(0.145, 0.03, 6, B.s(16)), 0xd8ccb0, M([0, H + 0.05, 0.01], [Math.PI / 2, 0, 0]));
   } else if (hk === 'bun' || hk == null) {
     B.sph('hair', s.hair ?? 0x161210, 0.05, M([0, H + 0.15, 0.02]));
     if (B.lod) B.cyl('gold', 0xc9a04a, 0.006, 0.006, 0.16, 4, M([0, H + 0.15, 0.02], [0, 0, Math.PI / 2]));
@@ -328,7 +347,7 @@ function weaponPlacement(type, hands, pose) {
       return [at(R, pose === 'stand' ? [-0.12, Math.PI / 2, 0] : [-0.7, Math.PI / 2, 0.1])];
     case 'sword': return [at(R, [-0.9, 0, 0.1])];
     case 'twin': return [at(R, [-0.85, 0, 0.12]), at(L, [-0.85, 0, -0.12])];
-    case 'fan': return [at(R, [-0.25, 0, 0.15])];
+    case 'fan': return [at(R, [-0.5, 0.3, -0.35])];
     case 'bow': return [at(L, [0, 0, 0])];
     case 'knife': return [at(R, [-0.6, 0, 0.3])];
     default: return [];
@@ -454,6 +473,53 @@ export const HERO = {
   lvfan: { head: 'jinxian', beard: 'short', cloth: WU_C, robe: true, weapon: 'sword', horse: { color: 0x6b4428 } },
   quancong: { head: 'helmet', beard: 'short', armored: true, armor: WU_A, cloth: WU_C, plume: 0xe0b040, weapon: 'spear', horse: { color: 0x8a6440 } },
   sunhuan: { head: 'helmet', beard: null, armored: true, armor: WU_A, cloth: WU_C, plume: 0xc02020, weapon: 'spear', horse: { color: 0x5a3a22 } },
+  // —— 赤壁時代 ——
+  caocao: { head: 'gold', beard: 'short', beardColor: 0x2a2018, armored: true, armor: 0x2a3048, cloth: 0x1a1630, trim: 0xe8c050, weapon: 'sword', horse: { color: 0x7a1e14, mane: 0x1a0a06, tassels: true }, cape: 0x8a1a1a, fierce: true, bio: '治世之能臣，亂世之奸雄。挾天子以令諸侯，平定北方，橫槊賦詩。' },
+  caozhi: { head: 'guanjin', hatColor: 0x1a1a2a, beard: null, cloth: 0x4a5a8a, robe: true, weapon: 'sword', horse: { color: 0xf0ece0 }, bio: '才高八斗，七步成詩。〈洛神賦〉傳誦千古。' },
+  caohong: { head: 'helmet', beard: 'full', armored: true, armor: 0x5a6070, cloth: WEI_C, plume: 0xc02020, weapon: 'dao', horse: { color: 0xf0e8d8 }, bio: '「天下可無洪，不可無君」，滎陽讓馬救曹操。' },
+  xiahoudun: { head: 'helmet', beard: 'full', eyepatch: true, armored: true, armor: 0x3a4660, cloth: 0x15203a, plume: 0x1a1a1a, weapon: 'spear', fierce: true, horse: { color: 0x2a1e16, barding: 0x3a4660 }, cape: 0x1a2a4a, bio: '曹操最信任的大將。征呂布時左目中箭，人稱「盲夏侯」。' },
+  xiahouyuan: { head: 'helmet', beard: 'short', armored: true, armor: 0x4a5878, cloth: WEI_C, plume: 0xe0b040, weapon: 'dao', horse: { color: 0x8a5a30 }, cape: 0x2a3a6a, bio: '虎步關右，善長途奔襲，「三日五百，六日一千」。' },
+  xuchu: { head: 'headband', bandColor: 0x2a2a4a, beard: 'full', bare: true, fat: true, cloth: 0x2a3050, skin: 0xd0a07a, pants: 0x2a2a3a, weapon: 'dao', fierce: true, horse: { color: 0x3a2a1e }, bio: '虎癡。曾裸衣鬥馬超，護衛曹操寸步不離。' },
+  yujin: { head: 'helmet', beard: 'long', armored: true, armor: WEI_A, cloth: WEI_C, plume: 0x2a3a8a, weapon: 'spear', horse: { color: 0x5a3a22 }, bio: '治軍嚴整，五子良將之一。樊城被關羽水淹七軍而降。' },
+  lejin: { head: 'helmet', beard: 'short', armored: true, armor: WEI_A, cloth: WEI_C, plume: 0xc02020, weapon: 'ji', horse: { color: 0x6b4428 } },
+  xunyu: { head: 'jinxian', beard: 'long', cloth: 0x2a2a4a, robe: true, weapon: 'sword', horse: { color: 0xe8e0d0 }, bio: '王佐之才，曹操稱為「吾之子房」。' },
+  jiaxu: { head: 'jinxian', beard: 'long', beardColor: 0x9a9a9a, hair: 0x8a8a8a, cloth: 0x2a2018, robe: true, weapon: 'sword', horse: { color: 0x3a2a1e }, bio: '算無遺策。潼關之戰獻離間計，使馬超、韓遂相疑。' },
+  pangde: { head: 'helmet', beard: 'full', armored: true, armor: 0x6a6050, cloth: 0x4a3a2a, plume: 0xf0f0f0, weapon: 'dao', fierce: true, horse: { color: 0xf0ece0 }, bio: '抬櫬決戰關羽，寧為國家鬼，不為賊將。' },
+  dengai: { head: 'helmet', beard: 'short', armored: true, armor: WEI_A, cloth: WEI_C, plume: 0x2a3a8a, weapon: 'spear', horse: { color: 0x5a3a22 }, bio: '口吃而多謀，後偷渡陰平滅蜀。' },
+  guanyu: { head: 'headband', bandColor: 0x2a7a3a, beard: 'long', beardColor: 0x0e0a08, face: 0xb8503a, skin: 0xc8805a, armored: true, armor: 0x3a6a3a, cloth: 0x2a6a32, trim: 0xd4a640, weapon: 'guandao', fierce: true, horse: { color: 0x9a2a14, mane: 0x2a0a04, tassels: true }, cape: 0x2a7a3a, bio: '美髯公。紅臉綠袍，青龍偃月刀，坐騎赤兔。溫酒斬華雄、過五關斬六將。' },
+  pangtong: { head: 'guanjin', hatColor: 0x3a2a1a, beard: 'short', skin: 0xb88a62, face: 0xb08560, cloth: 0x4a4030, robe: true, weapon: 'fan', arms: 'fan', horse: { color: 0xe8e8e0 }, cape: null, bio: '鳳雛先生，與臥龍齊名。獻入蜀三計，卒於雒城落鳳坡。' },
+  guanping: { head: 'helmet', beard: null, armored: true, armor: 0x4a6a4a, cloth: 0x2a5a32, plume: 0x2a6a3a, weapon: 'dao', horse: { color: 0x6b4428 } },
+  liaohua: { head: 'headband', bandColor: 0xc8a030, beard: 'short', armored: true, armor: SHU_A, cloth: SHU_C, weapon: 'dao', horse: { color: 0x5a3a22 }, bio: '黃巾出身，追隨關羽。「蜀中無大將，廖化作先鋒」。' },
+  huangzhong: { head: 'helmet', helmColor: 0xb09040, beard: 'long', beardColor: 0xe8e8e0, hair: 0xd8d8d0, armored: true, armor: 0xa08a40, cloth: 0x3a5a2a, plume: 0xc02020, weapon: 'dao', quiver: true, horse: { color: 0x8a5a30 }, cape: 0x7a2a1a, bio: '老當益壯，百步穿楊。定軍山一戰斬夏侯淵。' },
+  fazheng: { head: 'jinxian', beard: 'short', cloth: 0x2a4a4a, robe: true, weapon: 'sword', horse: { color: 0x3a2a1e }, bio: '劉備的謀主，定軍山之戰「可擊矣」。' },
+  yanyan: { head: 'helmet', beard: 'long', beardColor: 0xe0e0dc, hair: 0xd0d0c8, armored: true, armor: 0x5a6a6a, cloth: 0x2a5a5a, weapon: 'dao', fierce: true, horse: { color: 0x6b4428 }, bio: '「我州但有斷頭將軍，無有降將軍也！」' },
+  mengda: { head: 'helmet', beard: 'short', armored: true, armor: SHU_A, cloth: SHU_C, weapon: 'spear', horse: { color: 0x7a5232 } },
+  mifang: { head: 'gold', beard: 'short', cloth: 0x4a5a3a, robe: true, weapon: 'sword', horse: { color: 0xe8e0d0 } },
+  zhouyu: { head: 'gold', beard: null, armored: true, armor: 0xb0302a, cloth: 0x9a1e18, trim: 0xe8c050, weapon: 'sword', horse: { color: 0xf4f0e8, cloth: 0xa01e18, tassels: true }, cape: 0xd8b040, bio: '美周郎，雄姿英發。赤壁之戰火燒曹營，「檣櫓灰飛煙滅」。' },
+  lusu: { head: 'jinxian', beard: 'short', cloth: 0x5a2a20, robe: true, weapon: 'sword', horse: { color: 0x6b4428 }, bio: '榻上策：鼎足江東以觀天下之釁。力主孫劉聯盟。' },
+  lvmeng: { head: 'helmet', beard: 'short', armored: true, armor: WU_A, cloth: WU_C, plume: 0x1a1a1a, weapon: 'dao', horse: { color: 0x3a2a1e }, bio: '「士別三日，當刮目相待」。白衣渡江，奪取荊州。' },
+  huanggai: { head: 'helmet', beard: 'full', beardColor: 0x8a8a84, hair: 0x9a9a94, armored: true, armor: 0x6a3a2a, cloth: WU_C, weapon: 'whip', fierce: true, horse: { color: 0x5a3a22 }, bio: '苦肉計詐降，以火船焚燒曹操艦隊。' },
+  chengpu: { head: 'helmet', beard: 'long', beardColor: 0xb8b8b0, armored: true, armor: WU_A, cloth: WU_C, weapon: 'ji', horse: { color: 0x6b4428 }, bio: '江東四代老臣，赤壁之戰任右都督。' },
+  ganning: { head: 'headband', bandColor: 0xe0b040, beard: 'short', armored: false, bare: true, skin: 0xc89468, cloth: 0xa02a20, pants: 0x3a2018, weapon: 'dao', feathers: true, fierce: true, horse: { color: 0x2a1e16 }, cape: 0xe0b040, bio: '錦帆賊出身，腰懸銅鈴。百騎劫魏營，不折一人。' },
+  lingtong: { head: 'helmet', beard: null, armored: true, armor: WU_A, cloth: WU_C, plume: 0xf0f0f0, weapon: 'spear', horse: { color: 0xe8e0d0 }, bio: '逍遙津之戰捨命護孫權突圍，身被重創。' },
+  sunshangxiang: { head: null, female: true, armored: true, armor: 0xc04040, cloth: 0xc02a3a, trim: 0xf0d060, weapon: 'bow', arms: 'bow', horse: { color: 0xf0ece0, cloth: 0xc02a3a }, cape: 0xf0c0c0, bio: '孫權之妹，才捷剛猛，侍婢百餘人皆執刀侍立。嫁劉備。' },
+  weiwen: { head: 'helmet', beard: 'short', armored: true, armor: WU_A, cloth: WU_C, weapon: 'spear', horse: { color: 0x6b4428 }, bio: '奉孫權之命率甲士萬人浮海求夷州（今台灣）。' },
+  liuzhang: { head: 'gold', beard: 'short', fat: true, cloth: 0x2a6a6a, robe: true, weapon: 'sword', horse: { color: 0xe8e0d0 }, bio: '劉焉之子，性情寬柔，終將益州讓與劉備。' },
+  zhangren: { head: 'helmet', beard: 'short', armored: true, armor: 0x4a6a6a, cloth: 0x1e4a4a, plume: 0xc02020, weapon: 'spear', fierce: true, horse: { color: 0x3a2a1e }, bio: '忠勇之將，「老臣終不復事二主」。' },
+  liyan: { head: 'helmet', beard: 'short', armored: true, armor: 0x4a6a6a, cloth: 0x1e4a4a, weapon: 'spear', horse: { color: 0x6b4428 } },
+  zhanglu: { head: 'taoist', beard: 'long', cloth: 0xc8a840, robe: true, weapon: 'sword', horse: { color: 0xe8e0d0 }, bio: '五斗米道師君，據漢中三十年，政教合一。' },
+  zhangwei: { head: 'helmet', beard: 'full', armored: true, armor: 0x5a4a6a, cloth: 0x3a2a4a, weapon: 'spear', horse: { color: 0x6b4428 } },
+  yangren: { head: 'helmet', beard: 'short', armored: true, armor: 0x5a4a6a, cloth: 0x3a2a4a, weapon: 'dao', horse: { color: 0x5a3a22 } },
+  hansui: { head: 'furhat', beard: 'long', beardColor: 0xc8c8c0, armored: true, armor: 0x7a5a3a, cloth: 0x8a4a1a, weapon: 'dao', horse: { color: 0x8a6440 }, bio: '割據涼州三十餘年的老將，與馬騰結為兄弟。' },
+  madai: { head: 'helmet', beard: 'short', armored: true, armor: 0x8a6a4a, cloth: 0x8a4a1a, weapon: 'spear', horse: { color: 0xe8e0d0 } },
+  chenggongying: { head: 'furhat', hatColor: 0x4a3a2a, beard: 'short', cloth: 0x6a4a2a, robe: true, weapon: 'sword', horse: { color: 0x6b4428 } },
+  hanxuan: { head: 'gold', beard: 'short', fat: true, cloth: 0x4a5a6a, robe: true, weapon: 'sword', horse: { color: 0x7a5a3a } },
+  jinxuan: { head: 'jinxian', beard: 'short', cloth: 0x4a5a6a, robe: true, weapon: 'sword', horse: { color: 0x6b4428 } },
+  liudu: { head: 'jinxian', beard: 'long', cloth: 0x4a5a6a, robe: true, weapon: 'sword', horse: { color: 0x6b4428 } },
+  shixie: { head: 'jinxian', beard: 'long', beardColor: 0xd0d0c8, hair: 0xc0c0b8, cloth: 0x7a3a4a, robe: true, weapon: 'sword', horse: { color: 0xe8e0d0 }, bio: '交趾太守，治交州四十餘年，被尊為「南交學祖」。' },
+  wutugu: { head: 'tribal', beard: 'full', bare: true, fat: true, skin: 0x8a5a3a, cloth: 0xb08a4a, pants: 0x8a6a3a, weapon: 'axe', fierce: true, horse: { color: 0x3a2a1a }, bio: '烏戈國主，身披刀槍不入的藤甲。' },
+  yizhouwang: { head: 'tribal', beard: 'short', bare: true, skin: 0xa8704a, cloth: 0x3a6a8a, pants: 0x3a2a1a, weapon: 'spear', horse: { color: 0x6b4428 }, bio: '夷州（今台灣）的部落首領。' },
+  xushu: { head: 'guanjin', hatColor: 0x2a2a2a, beard: 'short', cloth: 0x3a3a4a, robe: true, weapon: 'sword', horse: { color: 0x6b4428 }, bio: '單福、走馬薦諸葛。「徐庶進曹營，一言不發」。' },
   // 南蠻
   menghuo: { head: 'tribal', beard: 'full', armored: false, cloth: 0x8a5a2a, skin: 0xb07848, belt: 0x6a3a1a, pants: 0x5a3a1a, weapon: 'axe', fierce: true, horse: { color: 0x9a3a1a, mane: 0x3a1a0a }, cape: 0xc8a050, bio: '南中豪帥，七擒七縱，終心悅誠服：「南人不復反矣」。' },
   zhurong: { head: 'tribal', female: true, armored: false, cloth: 0xb02a2a, skin: 0xc08a5a, pants: 0x6a2a1a, weapon: 'knife', horse: { color: 0xe0d0b0 }, cape: 0xe0b040, bio: '孟獲之妻，相傳為祝融氏之後，善使飛刀。' },
@@ -470,6 +536,18 @@ export const NPC = {
   '靳詳': { f: 'shu', head: 'guanjin', beard: 'short', cloth: 0x3a4a3a, robe: true },
   '闞澤': { f: 'wu', head: 'jinxian', beard: 'long', cloth: 0x5a2a2a, robe: true },
   '張昭': { f: 'wu', head: 'jinxian', beard: 'long', beardColor: 0xb0b0b0, hair: 0x9a9a9a, cloth: 0x4a1a1a, robe: true },
+  '漢獻帝': { f: 'wei', head: 'crown', beard: 'short', cloth: 0xc8a030, trim: 0xe03030, robe: true },
+  '程昱': { f: 'wei', head: 'jinxian', beard: 'long', cloth: 0x2a2a3a, robe: true },
+  '蔡瑁': { f: 'wei', head: 'helmet', beard: 'short', armored: true, armor: WEI_A, cloth: WEI_C },
+  '辛毗': { f: 'wei', head: 'jinxian', beard: 'long', cloth: 0x2a3050, robe: true },
+  '劉琦': { f: 'shu', head: 'guanjin', beard: null, cloth: 0x4a5a4a, robe: true },
+  '張松': { f: 'liuzhang', head: 'jinxian', beard: 'short', skin: 0xc09070, cloth: 0x2a5a5a, robe: true },
+  '鄧芝': { f: 'shu', head: 'jinxian', beard: 'short', cloth: 0x2a5a3a, robe: true },
+  '劉禪': { f: 'shu', head: 'crown', beard: null, fat: true, cloth: 0x2a5a32, robe: true },
+  '楊儀': { f: 'shu', head: 'jinxian', beard: 'thin', cloth: 0x2a4a3a, robe: true },
+  '步騭': { f: 'wu', head: 'jinxian', beard: 'short', cloth: 0x5a2a2a, robe: true },
+  '大喬': { f: 'wu', female: true, cloth: 0xe0a0b0, robe: true },
+  '小喬': { f: 'wu', female: true, cloth: 0xb0d0e0, robe: true },
   '眾將': { f: 'wei', head: 'helmet', beard: 'full', armored: true, armor: WEI_A, cloth: WEI_C, plume: 0xc02020 },
   '諸將': { f: 'wu', head: 'helmet', beard: 'full', armored: true, armor: WU_A, cloth: WU_C, plume: 0xc02020 },
 };
@@ -524,6 +602,7 @@ function groupFrom(B) {
 export function makeHero(id, factionColor, opts = {}) {
   const spec = { ...heroSpec(id || '') };
   if (opts.portrait) { spec.arms = 'down'; spec.weapon = null; }
+  if (opts.unarmed && spec.weapon !== 'fan') { spec.arms = 'down'; spec.weapon = null; }
   if (!id) Object.assign(spec, { head: 'helmet', beard: 'short', armored: true, armor: 0x6a6f78, cloth: factionColor, plume: 0xc02020, weapon: 'spear', horse: { color: 0x6b4428 } });
   const mounted = opts.mounted ?? true;
   const mount = mounted ? (spec.mount || 'horse') : null;
@@ -647,28 +726,61 @@ export function openViewer(container, id, factionColor) {
   };
 }
 
-// —— 批次士兵用的幾何（低細節，tint 部分著勢力色） ——
-export function soldierGeometry2(type, variant = 0) {
+// —— 批次士兵用的幾何（低細節，tint 部分著勢力色；依勢力有不同裝束） ——
+const TROOP_STYLE = {
+  wei: { armor: 0x4a505e, head: 'helmet', plume: 'tint', shield: 'round', barding: 0x3a4250 },
+  shu: { armor: 0x8a7a4a, head: 'helmet', plume: 0xf2f2ee, shield: 'round' },
+  wu: { armor: 0x6a3428, head: 'helmet', plume: 'tint', shield: 'oval', archerHead: 'headband' },
+  nanman: { armor: 0xb08a4a, head: 'tribal', bare: true, shield: 'oval', skin: 0x9a6a44 },
+  yizhou: { armor: 0x9a7a4a, head: 'tribal', bare: true, shield: 'oval', skin: 0xa06c48 },
+  xiliang: { armor: 0x7a5a3a, head: 'furhat', shield: 'round', plume: null },
+  liuzhang: { armor: 0x5a6a6a, head: 'helmet', plume: 'tint', shield: 'round' },
+  zhanglu: { armor: 0x5a5060, head: 'headband', shield: 'round' },
+  jingnan: { armor: 0x5a6068, head: 'helmet', plume: 'tint', shield: 'round' },
+  shixie: { armor: 0x7a6050, head: 'headband', shield: 'oval' },
+};
+export function soldierGeometry2(type, faction = 'wei', weapons = []) {
+  const st = TROOP_STYLE[faction] || TROOP_STYLE.wei;
   const B = new Builder(0);
+  const head = type === 'archer' ? (st.archerHead || (st.head === 'helmet' ? 'headband' : st.head)) : st.head;
   const spec = {
-    tint: true, armored: true, armor: 0x5c6068, cloth: 0xffffff, head: type === 'archer' ? 'headband' : 'helmet', bandColor: 0x3a2a1a,
-    plume: type === 'cav' || type === 'spear' ? 1 : null, beard: null, arms: type === 'spear' ? 'spear' : type === 'archer' ? 'bow' : 'weapon',
+    tint: true, armored: !st.bare, bare: !!st.bare, skin: st.skin, armor: st.armor, cloth: 0xffffff, head, bandColor: 0x3a2a1a,
+    plume: (type === 'cav' || type === 'spear') && st.plume !== null ? 1 : null, beard: null,
+    arms: type === 'spear' ? 'spear' : type === 'archer' ? 'bow' : 'weapon',
   };
   const pose = type === 'cav' ? 'ride' : 'stand';
-  if (type === 'cav') buildHorse(B, { tint: true, color: [0x6b4428, 0x3a2a1e, 0x8a6440][variant % 3] });
+  if (type === 'cav') buildHorse(B, { tint: true, color: [0x6b4428, 0x3a2a1e, 0x8a6440][faction.length % 3], barding: weapons.includes('armor') ? st.barding || 0x4a4a4a : null });
   const off = pose === 'ride' ? 0.62 : 0;
   B.base = M([0, off, 0]);
   const hands = buildHuman(B, spec, pose);
-  const wtype = type === 'cav' ? 'spear' : type === 'spear' ? 'spear' : type === 'archer' ? 'bow' : 'sword';
-  for (const m of weaponPlacement(wtype, hands, type === 'cav' ? 'ride' : (type === 'spear' ? 'ride' : 'stand'))) {
-    B.base = M([0, off, 0]).multiply(m);
-    buildWeapon(B, wtype, { tassel: 0xc02020 });
+  // 白色盔纓（白耳兵）
+  if (typeof st.plume === 'number' && (type === 'cav' || type === 'spear') && B.b.tint) {
+    B.cone('cloth', st.plume, 0.055, 0.24, 6, M([0, 1.725 + 0.36, 0.03], [0.25, 0, 0]));
+  }
+  const crossbow = type === 'archer' && weapons.includes('crossbow');
+  const wtype = type === 'cav' ? 'spear' : type === 'spear' ? 'spear' : type === 'archer' ? (crossbow ? 'crossbow' : 'bow') : (faction === 'nanman' || faction === 'wu' ? 'dao1' : 'sword');
+  if (wtype === 'crossbow') {
+    B.base = M([0, off, 0]);
+    B.box('wood', 0x4a3020, 0.06, 0.06, 0.6, M([0.05, 1.3, -0.36]));
+    B.add('wood', new THREE.TorusGeometry(0.28, 0.014, 4, 8, 2.2), 0x3a2414, M([0.05, 1.3, -0.6], [Math.PI / 2, 0, Math.PI / 2 - 1.1 + Math.PI / 2]));
+  } else if (wtype === 'dao1') {
+    B.base = M([0, off, 0]).multiply(M([hands.R.x, hands.R.y, hands.R.z], [-0.9, 0, 0.1]));
+    B.box('steel', 0xd4d8de, 0.06, 0.62, 0.01, M([0.02, 0.42, 0]));
+    B.box('gold', 0x8a6a2a, 0.1, 0.03, 0.04, M([0, 0.1, 0]));
+  } else {
+    for (const m of weaponPlacement(wtype, hands, type === 'cav' ? 'ride' : (type === 'spear' ? 'ride' : 'stand'))) {
+      B.base = M([0, off, 0]).multiply(m);
+      buildWeapon(B, wtype, { tassel: 0xc02020 });
+    }
   }
   B.base = M([0, off, 0]);
   if (type === 'inf') {
-    // 圓盾
-    B.cyl('tint', 0xdddddd, 0.26, 0.26, 0.04, 12, M([-0.36, 1.1, -0.22], [Math.PI / 2, 0, 0.25]));
-    B.cyl('metal', 0xb8a060, 0.06, 0.06, 0.06, 8, M([-0.37, 1.1, -0.25], [Math.PI / 2, 0, 0.25]));
+    if (st.shield === 'oval') {
+      B.sph('tint', 0xcfc0a0, 0.3, M([-0.36, 1.08, -0.2], [0, 0, 0.2], [0.18, 1.3, 0.85]), 10, 8);
+    } else {
+      B.cyl('tint', 0xdddddd, 0.26, 0.26, 0.04, 12, M([-0.36, 1.1, -0.22], [Math.PI / 2, 0, 0.25]));
+      B.cyl('metal', 0xb8a060, 0.06, 0.06, 0.06, 8, M([-0.37, 1.1, -0.25], [Math.PI / 2, 0, 0.25]));
+    }
   }
   if (type === 'archer') B.cyl('leather', 0x4a2e18, 0.06, 0.06, 0.5, 6, M([0.12, 1.32, 0.2], [0.3, 0, 0.2]));
   const g = B.merged();

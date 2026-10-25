@@ -4,7 +4,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { FACTIONS, GENERALS, TACTICS, WEAPONS, UNIT_TYPES, COUNTER, FORMATIONS, gname } from './data.js';
 import { makeNoise, clamp, lerp, smoothstep, rand, pick, sleep, tween, ease, fmt, mulberry32 } from './util.js';
-import { makeBanner, waveBanner, treeGeometries, makeWall, makeTent, makeCatapult } from './models.js';
+import { makeBanner, waveBanner, treeGeometries, makeWall, makeTent, makeCatapult, makeShip } from './models.js';
+import { Q } from './settings.js';
 import { makeHero, soldierGeometry2 as soldierGeometry } from './figures.js';
 import { el, say, choose, modal, toast, titleCard, hideDialog, portrait, root } from './ui.js';
 import * as SFX from './audio.js';
@@ -94,6 +95,9 @@ export class Battle {
     this.logs = [];
     this.keys = {};
     this.terrain = cfg.terrain || 'plains';
+    this.naval = this.terrain === 'naval';
+    this.D = state.D || { enemy: 1, atk: 1 };
+    this.boats = [];
     this.siege = this.terrain === 'siege';
     this.noise = makeNoise(cfg.seed || 11);
     this.rng = mulberry32(cfg.seed || 5);
@@ -105,6 +109,18 @@ export class Battle {
     const N = this.noise, c = this.cfg;
     let h = N.fbm(x * 0.012, z * 0.012, 4) * 2.2 + N.fbm(x * 0.05, z * 0.05, 2) * 0.4;
     const r = Math.hypot(x, z);
+    if (this.naval) {
+      const ax = Math.abs(x + N.fbm(z * 0.006, 2) * 30);
+      return -7 + smoothstep(150, 215, ax) * (12 + N.ridge(x * 0.02, z * 0.02, 3) * 14) + smoothstep(230, 330, r) * 30;
+    }
+    if (c.beach) {
+      const sx = -130 + N.fbm(z * 0.01, 5) * 18;
+      h = lerp(h, -6, smoothstep(sx + 20, sx - 20, x));
+    }
+    if (c.riverMid) {
+      const rz = N.fbm(x * 0.008, 9) * 10;
+      h = lerp(h, -2.0, smoothstep(17, 7, Math.abs(z - rz)));
+    }
     h += smoothstep(230, 330, r) * (35 + N.ridge(x * 0.01, z * 0.01, 3) * 40);
     if (this.terrain === 'mountain') {
       const ax = Math.abs(x + N.fbm(z * 0.01, 3.3) * 14);
@@ -138,6 +154,11 @@ export class Battle {
     }
   }
   ground(x, z) {
+    const h = this.groundRaw(x, z);
+    return this.naval ? Math.max(h, 1.3) : h;
+  }
+  inRiver(x, z) { return this.cfg.riverMid && this.groundRaw(x, z) < -0.8; }
+  groundRaw(x, z) {
     const { S, ext, data } = this.hg;
     const fx = clamp((x + ext) / (ext * 2) * (S - 1), 0, S - 1.001), fz = clamp((z + ext) / (ext * 2) * (S - 1), 0, S - 1.001);
     const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
@@ -178,12 +199,19 @@ export class Battle {
     }));
     s.add(sky);
     s.fog = new THREE.Fog(skyCols[1], 260, 900);
+    this.weather = c.weather || null;
+    if (this.weather === 'fog') { s.fog = new THREE.Fog(0xc8ccd0, 30, 240); }
+    if (this.weather === 'rain') { s.fog = new THREE.Fog(0x8a9098, 60, 420); }
+    if (this.weather === 'snow') { s.fog = new THREE.Fog(0xdde2e8, 60, 420); }
+    this.visR = (tod === 'night' ? 110 : Infinity);
+    if (this.weather === 'fog') this.visR = Math.min(this.visR, 85);
+    this.wind = c.wind ? new V2(...c.wind).normalize() : null;
     const sunI = { day: 2.6, dusk: 1.6, night: 0.5, dawn: 1.8 }[tod];
     s.add(new THREE.HemisphereLight(tod === 'night' ? 0x4a5a8a : 0xdfe9ff, 0x4a3a22, tod === 'night' ? 0.5 : 1.0));
     const sun = new THREE.DirectionalLight(tod === 'dusk' ? 0xffb070 : tod === 'night' ? 0x8aa0ff : 0xfff2dd, sunI);
     sun.position.set(tod === 'dusk' ? -160 : -90, tod === 'dusk' ? 70 : 160, 60);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(4096, 4096);
+    sun.shadow.mapSize.set(Q().shadow, Q().shadow);
     Object.assign(sun.shadow.camera, { left: -190, right: 190, top: 190, bottom: -190, near: 10, far: 600 });
     sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.4;
     s.add(sun); s.add(sun.target);
@@ -204,7 +232,7 @@ export class Battle {
     // 批次
     this.batches = {};
     for (const side of ['p', 'e']) for (const type of Object.keys(UNIT_TYPES)) {
-      const geo = soldierGeometry(type);
+      const geo = soldierGeometry(this.naval && type === 'cav' ? 'inf' : type, side === 'p' ? this.pf : this.ef, side === 'p' ? this.state.weapons : (this.cfg.enemy.weapons || []));
       const col = FACTIONS[side === 'p' ? this.pf : this.ef].color;
       const tint = new THREE.InstancedMesh(geo.tint, new THREE.MeshStandardMaterial({ color: col, vertexColors: true, roughness: 0.75 }), 900);
       const base = new THREE.InstancedMesh(geo.base, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.15 }), 900);
@@ -231,14 +259,14 @@ export class Battle {
     const t = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), z = pos.getZ(i);
-      const h = this.ground(x, z);
+      const h = this.groundRaw(x, z);
       pos.setY(i, h);
       const n = this.noise.fbm(x * 0.04, z * 0.04, 3);
       t.copy(grassA).lerp(grassB, clamp(0.5 + n, 0, 1));
       // 道路/踩踏
       if (!this.siege && this.terrain !== 'mountain') t.lerp(dirt, smoothstep(10, 2, Math.abs(x + n * 8)) * 0.35);
       if (this.terrain === 'mountain') t.lerp(dirt, smoothstep(22, 6, Math.abs(x)) * 0.45);
-      const hl = this.ground(x - 2, z), hr = this.ground(x + 2, z), hu = this.ground(x, z - 2), hd = this.ground(x, z + 2);
+      const hl = this.groundRaw(x - 2, z), hr = this.groundRaw(x + 2, z), hu = this.groundRaw(x, z - 2), hd = this.groundRaw(x, z + 2);
       const slope = Math.hypot(hr - hl, hd - hu) / 4;
       t.lerp(rock, smoothstep(0.55, 1.1, slope));
       if (h > 48) t.lerp(snow, smoothstep(48, 60, h));
@@ -255,6 +283,10 @@ export class Battle {
     m.receiveShadow = true;
     this.scene.add(m);
     this.groundMesh = m;
+    if (this.naval || this.cfg.riverMid || this.cfg.beach) {
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(this.naval ? 900 : 900, this.naval ? 900 : (this.cfg.beach ? 900 : 60)), new THREE.MeshStandardMaterial({ color: this.naval ? 0x2a5a78 : 0x3a7aa8, roughness: 0.12, metalness: 0.25, transparent: true, opacity: 0.88 }));
+      w.rotation.x = -Math.PI / 2; w.position.set(this.cfg.beach ? -560 : 0, this.naval ? 0.2 : -0.7, 0); w.receiveShadow = true; this.scene.add(w); this.water = w;
+    }
     if (this.cfg.river) {
       const w = new THREE.Mesh(new THREE.PlaneGeometry(60, 700), new THREE.MeshStandardMaterial({ color: 0x3a7aa8, roughness: 0.15, metalness: 0.2, transparent: true, opacity: 0.85 }));
       w.rotation.x = -Math.PI / 2; w.position.set(118, -0.9, 0); this.scene.add(w);
@@ -277,10 +309,11 @@ export class Battle {
     const tg = treeGeometries();
     const ptsP = [], ptsR = [];
     const rnd = this.rng;
-    for (let k = 0; k < 9000; k++) {
+    for (let k = 0; k < 9000 * Q().trees; k++) {
       const x = (rnd() - 0.5) * 640, z = (rnd() - 0.5) * 640;
       const r = Math.hypot(x, z);
       let d = this.forestAt(x, z);
+      if (this.groundRaw(x, z) < 0.2) continue;
       if (r > 200) d = Math.max(d, 0.25);
       if (this.siege && (z - this.zw) * this.sgnAtt < 10 && Math.abs(x) < 150) d = 0;
       if (this.siege && Math.abs(z - this.zw) < 30) d *= 0.1;
@@ -310,8 +343,9 @@ export class Battle {
     const rock = new THREE.DodecahedronGeometry(1, 0);
     const rm = new THREE.InstancedMesh(rock, new THREE.MeshStandardMaterial({ color: 0x8a847a, roughness: 1, flatShading: true }), 500);
     const d = new THREE.Object3D(); let gi = 0, ri = 0;
-    for (let k = 0; k < 7000; k++) {
-      const x = (rnd() - 0.5) * 420, z = (rnd() - 0.5) * 420; const h = this.ground(x, z);
+    for (let k = 0; k < Q().grass; k++) {
+      const x = (rnd() - 0.5) * 420, z = (rnd() - 0.5) * 420; const h = this.groundRaw(x, z);
+      if (h < 0.3) continue;
       if (h < -0.5 || (this.siege && (z - this.zw) * this.sgnAtt < 6)) continue;
       d.position.set(x, h, z); d.rotation.set(0, rnd() * 6, 0); d.scale.set(1, 0.6 + rnd(), 1); d.updateMatrix(); gm.setMatrixAt(gi++, d.matrix);
     }
@@ -335,7 +369,8 @@ export class Battle {
     wall.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     this.scene.add(wall);
     this.wall = wall;
-    this.gate = { hp: c.gateHP || 4000, max: c.gateHP || 4000, broken: false, mesh: wall.userData.gate };
+    const gh = (c.gateHP || 4000) * (this.defSide === 'p' ? 1 + 0.35 * ((c.wallLevel || 1) - 1) : 1);
+    this.gate = { hp: gh, max: gh, broken: false, mesh: wall.userData.gate };
     // 城內建築
     const roofM = new THREE.MeshStandardMaterial({ color: 0x3a3a44, roughness: 0.6 });
     const wallM = new THREE.MeshStandardMaterial({ color: 0xd8ccb0, roughness: 0.9 });
@@ -425,7 +460,13 @@ export class Battle {
       if (b.filter && !b.filter(sq)) continue;
       if (b.atk) atk *= b.atk; if (b.def) def *= b.def; if (b.spd) spd *= b.spd;
     }
-    if (sq.wallSquad) { def *= 2.3; range *= 1.15; }
+    if (sq.wallSquad) { def *= 2.3 * (sq.side === 'p' ? 1 + 0.1 * ((this.cfg.wallLevel || 1) - 1) : 1); range *= 1.15; }
+    if (sq.side === 'e') atk *= this.D.atk || 1;
+    else atk *= 1 + 0.05 * (this.state.training || 0);
+    if (sq.type === 'archer' && this.weather === 'rain') atk *= 0.8;
+    if (this.inRiver(sq.pos.x, sq.pos.y)) { spd *= 0.45; def *= 0.8; }
+    if (S.asleep) def *= 0.6;
+    if (S.chained) { spd *= 0.6; def *= 1.1; }
     if (S.lastStand) atk *= 1.25;
     if (S.reckless) def *= 0.88;
     if (sq.routed) spd *= 1.25;
@@ -483,6 +524,11 @@ export class Battle {
     }
     grp.traverse(o => { if (o.isMesh) o.castShadow = true; });
     this.scene.add(grp); sq.group = grp;
+    if (this.naval) {
+      const L = Math.max(14, (sq.depth || 6) + 10), W = Math.max(7, (sq.cols || 6) * SP[sq.type] + 3);
+      const ship = makeShip(L, W, F.color, sq.leader);
+      this.scene.add(ship); sq.ship = ship;
+    }
     const hit = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 6, 10), new THREE.MeshBasicMaterial({ visible: false }));
     hit.userData.sq = sq; this.scene.add(hit); sq.hit = hit;
     const lab = document.createElement('div');
@@ -494,6 +540,7 @@ export class Battle {
     sq.label = lab; sq.labelObj = obj;
   }
   removeSquadVisual(sq) {
+    if (sq.ship) { this.scene.remove(sq.ship); sq.ship = null; }
     if (sq.group) this.scene.remove(sq.group);
     if (sq.hit) this.scene.remove(sq.hit);
     if (sq.labelObj) { this.scene.remove(sq.labelObj); sq.label.remove(); }
@@ -510,7 +557,9 @@ export class Battle {
     this.sides.e = { id: 'e', faction: this.ef, formation: E.formation || 'yulin', tactics: E.tactics || ['volley', 'drum'], cd: {}, buffs: [], init: 0, lastStand: false, reckless: !!c.enemyReckless, marching: !!c.enemyMarching };
     this.enemyLeader = E.leader;
     const maxT = Math.max(E.troops, Math.min(this.state.troops, c.maxTroops || 1e9));
-    this.perSoldier = Math.max(20, Math.ceil(maxT / 380));
+    this.perSoldier = Math.max(20, Math.ceil(maxT / Q().soldierCap));
+    this.sides.e.asleep = c.nightRaid === 'p';
+    this.sides.e.chained = c.chained === 'e'; this.sides.p.chained = c.chained === 'p';
   }
 
   anchor(side) {
@@ -523,10 +572,16 @@ export class Battle {
 
   createEnemySquads() {
     const c = this.cfg, E = c.enemy;
-    const comp = E.comp || COMP[this.ef] || COMP.wei;
-    const gens = (E.generals || []).filter(g => GENERALS[g]);
-    const leader = E.leader;
+    const comp0 = E.comp || COMP[this.ef] || COMP.wei;
+    const comp = this.naval ? { ...comp0, inf: (comp0.inf || 0) + (comp0.cav || 0), cav: 0 } : comp0;
+    const ok = (g) => GENERALS[g] && !this.state.dead.includes(g) && !this.state.generals.includes(g) && !this.state.prisoners.includes(g);
+    const gens = (E.generals || []).filter(ok);
+    const leader = ok(E.leader) ? E.leader : gens[0];
+    this.enemyLeader = leader;
+    if (c.enemyAmbush?.generals) c.enemyAmbush.generals = c.enemyAmbush.generals.filter(ok);
+    if (c.reinforce && c.reinforce.general && !(c.reinforce.side === 'p' ? this.state.generals.includes(c.reinforce.general) || !this.state.dead.includes(c.reinforce.general) : ok(c.reinforce.general))) c.reinforce.general = null;
     const ambush = c.enemyAmbush;
+    E.troops = Math.round(E.troops * (this.D.enemy || 1));
     let mainTroops = E.troops;
     const out = [];
     if (ambush) {
@@ -577,7 +632,7 @@ export class Battle {
     for (const g of gens) if (!others.includes(g) && g !== leader) others.push(g);
     const n = clamp(Math.ceil(avail / 5000), 3, 6);
     const types = this.siege && this.attSide === 'p' ? ['inf', 'spear', 'archer', 'inf', 'archer', 'cav'] :
-      this.siege ? ['archer', 'inf', 'spear', 'archer', 'inf', 'cav'] : ['spear', 'inf', 'cav', 'archer', 'cav', 'archer'];
+      this.siege ? ['inf', 'archer', 'archer', 'spear', 'inf', 'cav'] : this.naval ? ['inf', 'archer', 'spear', 'archer', 'inf', 'archer'] : ['spear', 'inf', 'cav', 'archer', 'cav', 'archer'];
     const rows = [];
     for (let i = 0; i < n; i++) rows.push({ type: types[i], general: i === 0 ? leader : (others[i - 1] || ''), troops: Math.floor(avail / n / 500) * 500, wave: i < 3 ? 1 : 2, ambush: false });
     // 鐵律：主將所在部隊為步兵
@@ -590,6 +645,7 @@ export class Battle {
     this.squads = this.squads.filter(s => s.side !== 'p' || s.reinforcement);
     rows.forEach((r, i) => {
       if (r.troops <= 0) return;
+      if (this.naval && r.type === 'cav') r.type = 'inf';
       const sq = this.makeSquad('p', { type: r.type, troops: r.troops, general: r.general || null, wave: r.wave, ambush: r.ambush, leader: i === 0, morale: this.cfg.playerMorale });
       if (this.siege && this.defSide === 'p' && r.type === 'archer') { sq.wallSquad = true; sq.onWall = true; }
       this.squads.push(sq);
@@ -663,7 +719,16 @@ export class Battle {
   }
 
   enemiesOf(side) { return this.squads.filter(s => s.side !== side && !s.dead && !s.escaped); }
-  visibleTarget(s) { return !s.dead && !s.escaped && !(s.hidden && !s.revealed && s.side === 'e') && !(s.hidden && s.side === 'p'); }
+  visibleTarget(s, by) {
+    if (s.dead || s.escaped || (s.hidden && !s.revealed && s.side === 'e') || (s.hidden && s.side === 'p')) return false;
+    return !by || this.visibleTo(by, s);
+  }
+  visibleTo(side, s) {
+    if (this.visR === Infinity || s.side === side) return true;
+    if (s.engaged || s._seenT > this.simT) return true;
+    for (const o of this.squads) if (o.side === side && !o.dead && !o.escaped && o.pos.distanceTo(s.pos) < this.visR) { s._seenT = this.simT + 2; return true; }
+    return false;
+  }
 
   outside(z) { return (z - this.zw) * this.sgnAtt > 0; }
 
@@ -708,17 +773,45 @@ export class Battle {
       types.forEach((t, i) => {
         const sq = this.makeSquad(side, { type: t, troops: Math.round(R.troops / types.length), general: i === 0 ? R.general : (R.generals?.[i - 1]), wave: 1, reinforcement: true });
         this.layoutSquad(sq);
-        const zEdge = side === 'p' ? 150 : -150;
+        const zEdge = (side === 'p' ? 150 : -150) * (R.rear ? -1.2 : 1);
         sq.pos.set((i - (types.length - 1) / 2) * 30 + (R.x || 0), this.siege ? this.anchor(side).y + (side === this.attSide ? this.sgnAtt * 50 : -this.sgnAtt * 50) : zEdge);
-        sq.yaw = side === 'p' ? 0 : Math.PI;
+        sq.yaw = (side === 'p') !== !!R.rear ? 0 : Math.PI;
         sq.released = true; sq.state = 'idle';
         this.squads.push(sq); this.placeSoldiers(sq); this.addSquadVisual(sq);
+        if (R.shock) for (const o of this.squads) if (o.side !== side && !o.dead) o.morale -= R.shock;
         if (side === 'p') this.sides.p.init += sq.troops; else this.sides.e.init += sq.troops;
       });
       this.rebuildBatches();
       this.log(side, R.msg || `${gname(R.general)}率援軍${fmt(R.troops)}趕到戰場！`);
       SFX.horn();
       for (const sq of this.squads) if (sq.side !== side && !sq.dead) sq.morale -= 10;
+    }
+    // 夜襲：敵軍熟睡
+    if (this.sides.e.asleep) {
+      if (this.squads.some(s => s.side === 'e' && s.attackers > 0 || s.side === 'e' && s.loss > 0) || this.simT > 35) {
+        this.sides.e.asleep = false;
+        for (const s of this.squads) if (s.side === 'e' && !s.dead) { s.released = true; s.morale -= 25; }
+        this.log('p', '敵軍從睡夢中驚醒，營中大亂！');
+        SFX.horn();
+      }
+    }
+    // 火船
+    for (const b of this.boats) {
+      if (b.done) continue;
+      const tg = b.target && !b.target.dead ? b.target : this.enemiesOf(b.by).sort((a, c) => a.pos.distanceTo(b.pos) - c.pos.distanceTo(b.pos))[0];
+      if (!tg) { b.done = true; continue; }
+      b.target = tg;
+      const d = new V2().subVectors(tg.pos, b.pos); const len = d.length();
+      let spd = 15;
+      if (this.wind) spd *= 1 + 0.6 * Math.max(0, d.clone().normalize().dot(this.wind));
+      b.pos.addScaledVector(d, Math.min(1, spd * dt / Math.max(len, 0.01)));
+      if (len < tg.radius + 6) {
+        b.done = true;
+        const chained = this.sides[tg.side].chained;
+        this.fires.push({ pos: tg.pos.clone(), r: 20, until: this.simT + 14, by: b.by, power: b.power * (chained ? 1.5 : 1), spread: 2, canSpread: true, bonus: chained ? 0.8 : 0.2, naval: true });
+        if (!this._fsLog || this.simT - this._fsLog > 6) { this._fsLog = this.simT; this.log(b.by, chained ? '火船撞入敵陣！敵艦以鐵索相連，無法散開！' : '火船撞上敵艦，烈焰沖天！'); }
+        SFX.fireSound(0.6);
+      }
     }
     // 斷水
     if (c.waterCut) for (const sq of this.squads) if (sq.side === c.waterCut && !sq.dead && !sq.routed) sq.morale -= dt * (this.hasWeapon(sq.side, 'muniu') ? 0.12 : 0.35);
@@ -741,7 +834,7 @@ export class Battle {
         const l = Math.min(sq.loss, sq.troops);
         sq.troops -= l;
         const mf = this.sides[sq.side].lastStand ? 60 : 95;
-        sq.morale -= (l / sq.max) * mf * (sq.attackers > 1 ? 1.25 : 1);
+        sq.morale -= (l / sq.max) * mf * (sq.attackers > 1 ? 1.25 : 1) * (sq.wallSquad || (this.siege && sq.side === this.defSide) ? 0.6 : 1);
         sq.loss = 0;
         if (sq.troops <= 1) this.wipeOut(sq);
         else if (sq.morale <= 0 && !sq.routed) this.rout(sq);
@@ -771,7 +864,7 @@ export class Battle {
         if (tgt) to = new THREE.Vector3(tgt.pos.x + rand(-6, 6), this.wallH + 1, tgt.pos.y);
         else { const gp = this.gatePos(); to = new THREE.Vector3(gp.x + rand(-4, 4), 5, gp.y); }
         this.launchBoulder(new THREE.Vector3(from.x, from.y + 5, from.z), to, 2.4, () => {
-          if (tgt && !tgt.dead) { tgt.loss += 90 + Math.random() * 120; tgt.morale -= 5; }
+          if (tgt && !tgt.dead) { tgt.loss += 30 + Math.random() * 50; tgt.morale -= 3; }
           else if (!tgt && !this.gate.broken) this.gate.hp -= 220;
         });
         const arm = cp.mesh.userData.arm;
@@ -781,13 +874,14 @@ export class Battle {
     // 火
     for (const f of this.fires) {
       if (f.until < this.simT) continue;
+      if (this.weather === 'rain') f.power = Math.min(f.power, 0.25);
       for (const sq of this.squads) {
         if (sq.dead || sq.side === f.by) continue;
         const d = sq.pos.distanceTo(f.pos);
         if (d < f.r + sq.radius * 0.6) {
           const mult = Math.min(4, 1 + this.forestAt(sq.pos.x, sq.pos.y) * 1.6 + this.campAt(sq.pos.x, sq.pos.y) * 0.7 + (f.bonus || 0));
           sq.loss += (sq.troops * 0.0055 + 6) * mult * f.power * dt;
-          sq.morale -= dt * 1.5 * mult;
+          sq.morale -= dt * 1.1 * Math.min(mult, 2.5);
           if (!sq.routed && sq.order !== 'move' && sq.side === 'e' && Math.random() < dt * 0.2) { sq.moveTo = new V2(sq.pos.x + rand(-30, 30), sq.pos.y + (sq.side === 'p' ? 30 : -30)); }
         }
       }
@@ -795,7 +889,7 @@ export class Battle {
       f.spread -= dt;
       if (f.spread <= 0 && f.canSpread) {
         f.spread = 4.5;
-        const near = this.squads.filter(s => s.side !== f.by && !s.dead && s.pos.distanceTo(f.pos) < 55 && s.pos.distanceTo(f.pos) > f.r && this.forestAt(s.pos.x, s.pos.y) + this.campAt(s.pos.x, s.pos.y) > 0.35);
+        const near = this.squads.filter(s => s.side !== f.by && !s.dead && s.pos.distanceTo(f.pos) < (f.naval && this.sides[s.side].chained ? 80 : 55) && s.pos.distanceTo(f.pos) > f.r && (this.forestAt(s.pos.x, s.pos.y) + this.campAt(s.pos.x, s.pos.y) > 0.35 || (f.naval && this.sides[s.side].chained) || (f.naval && Math.random() < 0.3)) && (!this.wind || new V2().subVectors(s.pos, f.pos).normalize().dot(this.wind) > -0.3));
         if (near.length && this.fires.filter(x => x.until > this.simT).length < 5) {
           const t = pick(near);
           this.fires.push({ pos: t.pos.clone(), r: 16, until: this.simT + 10, by: f.by, power: f.power * 0.8, spread: 4.5, canSpread: f.power > 0.6, bonus: f.bonus });
@@ -825,7 +919,7 @@ export class Battle {
   gatePos() { return new V2(0, this.zw + this.sgnAtt * 4.5); }
 
   chooseTarget(sq) {
-    const foes = this.enemiesOf(sq.side).filter(s => this.visibleTarget(s));
+    const foes = this.enemiesOf(sq.side).filter(s => this.visibleTarget(s, sq.side));
     if (!foes.length) return null;
     let best = null, bd = 1e9;
     const isArch = sq.type === 'archer';
@@ -834,6 +928,7 @@ export class Battle {
       if (f.routed) d += 40;
       if (sq.type === 'cav' && f.type === 'archer') d *= 0.7;
       if (sq.type === 'spear' && f.type === 'cav') d *= 0.8;
+      if (sq.wallSquad && (f.climbing || f.onWall)) d *= 0.3;
       if (this.siege) {
         // 攻方近戰無雲梯時不能打城上守軍
         if (f.wallSquad && !isArch && sq.side === this.attSide && !this.canClimb(sq)) d += 1e5;
@@ -867,7 +962,7 @@ export class Battle {
     const step = Math.min(len, spd * dt);
     // 地形坡度減速
     const h0 = this.ground(sq.pos.x, sq.pos.y), h1 = this.ground(sq.pos.x + d.x / len * 3, sq.pos.y + d.y / len * 3);
-    const slow = clamp(1 - Math.max(0, h1 - h0) / 6, 0.45, 1);
+    const slow = this.naval ? 1 : clamp(1 - Math.max(0, h1 - h0) / 6, 0.45, 1);
     sq.pos.addScaledVector(d, step * slow / len);
     // 同陣營互斥
     for (const o of this.squads) {
@@ -892,7 +987,8 @@ export class Battle {
     // 攀城
     if (sq.climbing) {
       sq.climbT += dt; sq.state = 'climb';
-      if (sq.climbT > 5) { sq.climbing = false; sq.onWall = true; this.log(sq.side, `${this.sqName(sq)}登上城頭！`); }
+      sq.loss += sq.troops * 0.004 * dt;
+      if (sq.climbT > 9) { sq.climbing = false; sq.onWall = true; this.log(sq.side, `${this.sqName(sq)}登上城頭！`); }
       return;
     }
     if (sq.onWall && !sq.wallSquad && !this.squads.some(o => o.side !== sq.side && o.wallSquad && !o.dead && !o.routed)) {
@@ -942,7 +1038,7 @@ export class Battle {
         if (l < sq.radius + 4) {
           sq.state = 'gate'; sq.engaged = true;
           const ram = this.hasWeapon(sq.side, 'ram') ? 3 : 1;
-          this.gate.hp -= sq.troops * 0.0045 * st.atk * ram * dt;
+          this.gate.hp -= sq.troops * 0.0016 * st.atk * (ram === 3 ? 2.2 : 1) * dt;
           if (Math.random() < dt * 3) SFX.clash(0.12);
           if (Math.random() < dt * 4) this.particlesN.emit(gp.x + rand(-5, 5), rand(1, 4), gp.y, rand(-1, 1), rand(1, 2), rand(-1, 1), 1.5, 4, 0.6, 0.55, 0.45, 0.6, 0, 2);
         } else sq.state = 'move';
@@ -951,8 +1047,13 @@ export class Battle {
       }
     }
     if (!tgt) {
-      // 無敵可打：攻方往前，守方原地
+      // 無敵可見：守方原地，其餘朝敵軍方向搜索前進
       if (this.siege && sq.side === this.defSide) { sq.state = 'hold'; return; }
+      const foes = this.enemiesOf(sq.side).filter(e => !e.hidden);
+      if (foes.length && sq.order === 'auto' && !sq.wallSquad) {
+        const c = foes.reduce((a, e) => a.add(e.pos), new V2()).multiplyScalar(1 / foes.length);
+        if (c.distanceTo(sq.pos) > 25) { this.moveToward(sq, c, st.spd * 0.7, dt); sq.state = 'move'; return; }
+      }
       sq.state = 'idle';
       return;
     }
@@ -980,7 +1081,7 @@ export class Battle {
   charging(sq) { return sq.type === 'cav'; }
 
   fightInRange(sq, st, dt, rangedOnly) {
-    const foes = this.enemiesOf(sq.side).filter(e => this.visibleTarget(e));
+    const foes = this.enemiesOf(sq.side).filter(e => this.visibleTarget(e, sq.side));
     let best = null, bd = 1e9;
     for (const f of foes) {
       const d = sq.pos.distanceTo(f.pos) - sq.radius - f.radius;
@@ -1007,7 +1108,8 @@ export class Battle {
     if (F.flank && tgt.attackers > 1) m *= F.flank;
     if (tgt.attackers > 1) m *= 1.12;
     if (tgt.routed) m *= 1.8;
-    if (tgt.wallSquad && sq.onWall) m *= 0.8;
+    if (tgt.wallSquad && sq.onWall) m *= 0.5;
+    if (sq.wallSquad && tgt.onWall) m *= 1.4;
     if (this.charging(sq) && this.sides[sq.side].buffs.some(b => b.id === 'charge' && b.until > this.simT)) m *= 1.2;
     const dmg = sq.troops * 0.0105 * st.atk * m / ts.def * dt;
     tgt.loss += dmg; sq.killed += dmg;
@@ -1027,6 +1129,7 @@ export class Battle {
     let m = COUNTER.archer[tgt.type];
     if (tgt.wallSquad) m *= 0.5;
     if (sq.wallSquad) m *= 1.2;
+    if (tgt.climbing) m *= 2.5;
     const hd = this.ground(sq.pos.x, sq.pos.y) - this.ground(tgt.pos.x, tgt.pos.y) + (sq.wallSquad ? this.wallH : 0);
     if (hd > 5) m *= 1.2;
     const dmg = sq.troops * 0.0085 * st.atk * m / ts.def * dt;
@@ -1127,6 +1230,8 @@ export class Battle {
     if (id === 'volley') return mine.some(s => s.type === 'archer' && s.released);
     if (id === 'ambush') return this.squads.some(s => s.side === side && s.hidden && !s.dead);
     if (id === 'rockfall') return this.rockfallTargets(side).length > 0;
+    if (id === 'fireship') return this.naval;
+    if (id === 'raid') return false;
     return true;
   }
   rockfallTargets(side) {
@@ -1183,6 +1288,20 @@ export class Battle {
         for (const s of mine) s.morale = Math.min(110, s.morale + 22 * intF);
         SFX.drumRoll(10, 0.2);
         break;
+      case 'fireship': {
+        const mine2 = this.squads.filter(s => s.side === side && !s.dead);
+        const front = mine2.reduce((a, s) => a.add(s.pos), new V2()).multiplyScalar(1 / Math.max(1, mine2.length));
+        const foes = this.enemiesOf(side).filter(e => this.visibleTarget(e));
+        for (let i = 0; i < 5; i++) {
+          const m = makeShip(10, 5, 0x6a4a2a);
+          m.scale.setScalar(0.7);
+          this.scene.add(m);
+          const pos = new V2(front.x + (i - 2) * 16, front.y + (side === 'p' ? -18 : 18));
+          this.boats.push({ mesh: m, pos, target: foes[i % Math.max(1, foes.length)], by: side, power: intF, done: false });
+        }
+        SFX.fireSound(0.4);
+        break;
+      }
       case 'shield':
         S.buffs.push({ id, def: 1.6, until: this.simT + 10 });
         break;
@@ -1216,18 +1335,22 @@ export class Battle {
     if (this.simT > 12) tryUse('fire', pin ? 0.3 : 0.05);
     if (this.squads.filter(s => s.side === 'e' && s.engaged).length >= 2) tryUse('shield', 0.15);
     tryUse('rockfall', 0.35);
+    if (this.simT > 35) tryUse('fireship', 0.2);
     if (this.simT > 20) tryUse('feint', 0.03);
   }
 
   // ———————————————— 視覺 ————————————————
   updateVisuals(rdt, sdt) {
+    for (const sq of this.squads) sq._hideV = (sq.hidden && sq.side === 'e' && !sq.revealed && !this.cfg.enemyAmbush?.revealed) || (sq.side === 'e' && this.phase === 'fight' && !this.visibleTo('p', sq));
+    this.updateNaval(rdt);
+    this.updateWeather(rdt);
     const dummy = this._d || (this._d = new THREE.Object3D());
     const t = this.time;
     for (const [key, b] of Object.entries(this.batches)) {
       const n = Math.min(900, b.list.length);
       for (let i = 0; i < n; i++) {
         const so = b.list[i], sq = so.sq;
-        if (so.gone || (sq.hidden && sq.side === 'e' && !sq.revealed && !this.cfg.enemyAmbush?.revealed)) {
+        if (so.gone || sq._hideV) {
           dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.updateMatrix();
           b.tint.setMatrixAt(i, dummy.matrix); b.base.setMatrixAt(i, dummy.matrix); continue;
         }
@@ -1257,7 +1380,7 @@ export class Battle {
       }
       // 群組（將軍、旗）
       if (sq.group && !sq.escaped) {
-        const visible = !(sq.hidden && sq.side === 'e' && !sq.revealed && !this.cfg.enemyAmbush?.revealed);
+        const visible = !sq._hideV;
         sq.group.visible = visible;
         const c = Math.cos(sq.yaw), s = Math.sin(sq.yaw);
         const back = (sq.depth || 4) / 2 + 2.5;
@@ -1343,6 +1466,62 @@ export class Battle {
     if (this.camShake > 0) { this.camShake -= rdt; this.camera.position.x += Math.sin(t * 60) * this.camShake * 0.6; }
   }
 
+  updateNaval(rdt) {
+    if (!this.naval && !this.boats.length) return;
+    const t = this.time;
+    for (const sq of this.squads) {
+      if (!sq.ship) continue;
+      if (sq.escaped) { this.scene.remove(sq.ship); sq.ship = null; continue; }
+      const p = sq.pos;
+      sq.ship.position.set(p.x, sq.dead ? Math.max(-6, sq.ship.position.y - rdt * 0.8) : Math.sin(t * 1.3 + sq.id) * 0.15, p.y);
+      sq.ship.rotation.y = sq.yaw;
+      sq.ship.rotation.z = Math.sin(t * 0.9 + sq.id) * 0.03 + (sq.dead ? 0.25 : 0);
+      sq.ship.visible = !sq._hideV;
+    }
+    for (const b of this.boats) {
+      if (!b.mesh) continue;
+      if (b.done) { this.scene.remove(b.mesh); b.mesh = null; continue; }
+      b.mesh.position.set(b.pos.x, 0.1, b.pos.y);
+      if (b.target) b.mesh.rotation.y = Math.atan2(-(b.target.pos.x - b.pos.x), -(b.target.pos.y - b.pos.y));
+      for (let i = 0; i < 4; i++) this.particlesAdd.emit(b.pos.x + rand(-2, 2), rand(1, 4), b.pos.y + rand(-4, 4), rand(-0.5, 0.5), rand(3, 7), rand(-0.5, 0.5), rand(0.6, 1.1), rand(2.5, 4.5), 1, rand(0.35, 0.6), 0.1, 0.9, -2, -2);
+    }
+    // 連環船：鐵索
+    for (const side of ['p', 'e']) {
+      if (!this.sides[side]?.chained) continue;
+      const ships = this.squads.filter(s => s.side === side && s.ship && !s.dead);
+      if (!this._chain) this._chain = {};
+      let line = this._chain[side];
+      if (!line) { line = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x222222 })); this.scene.add(line); this._chain[side] = line; }
+      const pts = [];
+      for (let i = 0; i < ships.length; i++) for (let j = i + 1; j < ships.length; j++) {
+        if (ships[i].pos.distanceTo(ships[j].pos) < 45) { const a = ships[i].pos, b = ships[j].pos; pts.push(a.x, 1.6, a.y, b.x, 1.6, b.y, a.x, 2.2, a.y, b.x, 2.2, b.y); }
+      }
+      line.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    }
+  }
+  updateWeather(rdt) {
+    if (this.weather !== 'rain' && this.weather !== 'snow') return;
+    if (!this.rain) {
+      const n = Q().grass > 3000 ? 3000 : 1200, snow = this.weather === 'snow';
+      const g = new THREE.BufferGeometry(); const arr = new Float32Array(n * 6);
+      g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+      this.rain = { n, arr, g, snow, seeds: Array.from({ length: n }, () => [rand(-80, 80), rand(0, 60), rand(-80, 80)]) };
+      const m = snow ? new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 }) : new THREE.LineBasicMaterial({ color: 0xaab4c8, transparent: true, opacity: 0.5 });
+      this.rain.obj = snow ? new THREE.Points(g, m) : new THREE.LineSegments(g, m);
+      this.rain.obj.frustumCulled = false;
+      this.scene.add(this.rain.obj);
+    }
+    const R = this.rain, c = this.controls.target;
+    const fall = R.snow ? 4 : 60;
+    for (let i = 0; i < R.n; i++) {
+      const s = R.seeds[i];
+      s[1] -= fall * rdt; if (R.snow) { s[0] += Math.sin(this.time + i) * rdt; }
+      if (s[1] < 0) { s[1] = 60; s[0] = rand(-80, 80); s[2] = rand(-80, 80); }
+      const x = c.x + s[0], y = c.y + s[1], z = c.z + s[2];
+      R.arr.set([x, y, z, x - (this.wind ? this.wind.x : 0.3), y + (R.snow ? 0.01 : 1.6), z - (this.wind ? this.wind.y : 0)], i * 6);
+    }
+    R.g.attributes.position.needsUpdate = true;
+  }
   updateSoldier(so, sq, dt, rdt) {
     if (!so.alive) {
       so.deadT += dt;
@@ -1370,7 +1549,7 @@ export class Battle {
       face = Math.atan2(-dx, -dz);
     }
     if (sq.climbing) {
-      const prog = clamp(sq.climbT / 5, 0, 1);
+      const prog = clamp(sq.climbT / 9, 0, 1);
       tz = this.zw + this.sgnAtt * (4.5 - prog * 2);
     }
     if (sq.onWall && !sq.wallSquad) { tz = this.zw + (so.lz * 0.15); }
@@ -1385,7 +1564,7 @@ export class Battle {
     if (dt > 0) so.yaw = lerpAngle(so.yaw, face, Math.min(1, dt * 6));
     let gy = this.ground(so.x, so.z);
     if (sq.onWall || sq.wallSquad) gy += this.wallH + 0.3;
-    if (sq.climbing) gy += clamp(sq.climbT / 5, 0, 1) * this.wallH;
+    if (sq.climbing) gy += clamp(sq.climbT / 9, 0, 1) * this.wallH;
     const ph = this.time * (sq.type === 'cav' ? 11 : 9) + so.ph;
     so.y = gy + (moving ? Math.abs(Math.sin(ph)) * (sq.type === 'cav' ? 0.3 : 0.14) : 0);
     so.lean = fighting ? Math.sin(this.time * 8 + so.ph) * 0.32 : (moving ? -0.08 : 0);
@@ -1593,6 +1772,10 @@ export class Battle {
     const es = this.createEnemySquads();
     this.squads.push(...es);
     this.layoutSide('e');
+    if (this.cfg.enemyLeaderExposed) {
+      const L = this.squads.find(s => s.side === 'e' && s.leader);
+      if (L) { L.troops = Math.round(L.troops * 0.35); L.max = L.troops; L.pos.y += 42; L.home = L.pos.clone(); this.layoutSquad(L); this.placeSoldiers(L); this.rebuildBatches(); }
+    }
     this.playerRows = this.defaultPlayerRows();
     this.playerLeader = this.playerRows[0].general;
     this.applyPlayerRows(this.playerRows);
@@ -1601,6 +1784,7 @@ export class Battle {
     // 開場
     const c = this.cfg;
     this.camera.position.set(-160, 90, -200); this.controls.target.set(0, 0, -40); this.camera.lookAt(this.controls.target);
+    SFX.music('battle');
     SFX.drumRoll(6, 0.35);
     titleCard(c.name || '交戰', c.sub || `${FACTIONS[this.pf].full} vs ${FACTIONS[this.ef].full}`, 2600);
     await this.camTo(new THREE.Vector3(140, 70, -60), new THREE.Vector3(0, 0, 0), 3200);
@@ -1664,7 +1848,7 @@ export class Battle {
       const chance = clamp(0.05 + ((P?.int || 60) - (E?.int || 60)) / 160 + (pt / et - 1) * 0.25 + (c.surrenderBonus || 0) - (E?.ruler ? 0.25 : 0), 0, 0.65);
       if (Math.random() < chance) {
         await say(this.enemyLeader, c.parley?.surrender || '……將軍所言甚是。罷了，願降！');
-        res = { result: 'win', surrender: true, pLost: 0, eLost: 0, captives: Math.round(et * 0.75), capturedGenerals: this.squads.filter(s => s.side === 'e' && s.general).map(s => s.general), lostGenerals: [], gold: Math.round(et * 0.05) };
+        res = { result: 'win', surrender: true, pLost: 0, eLost: 0, captives: Math.round(et * 0.75), capturedGenerals: this.squads.filter(s => s.side === 'e' && s.general).map(s => s.general), lostGenerals: [], gold: Math.round(et * 0.05), enemyFaction: this.ef, participants: [], deployed: 0 };
       } else {
         await say(this.enemyLeader, c.parley?.refuse || '住口！吾頭可斷，豈能降汝！');
         for (const s of this.squads) if (s.side === 'e') s.morale += 5;
@@ -1786,7 +1970,7 @@ export class Battle {
           <div class="sec-title">部隊編制（第一隊為主帥）　敵軍約 ${fmt(this.sides.e.init || this.sideTroops('e'))}</div>
           ${rows.map((r, i) => `<div class="sq-row" data-i="${i}">
               <div class="ix">${i === 0 ? '帥' : i + 1}</div>
-              <select class="ty">${Object.entries(UNIT_TYPES).map(([k, t]) => `<option value="${k}" ${r.type === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select>
+              <select class="ty">${Object.entries(UNIT_TYPES).filter(([k]) => !(this.naval && k === 'cav')).map(([k, t]) => `<option value="${k}" ${r.type === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select>
               <select class="gn">${gopts(r.general)}</select>
               <div class="tn">${fmt(r.troops)}</div>
               <div class="sub"><input type="range" class="tr" min="0" max="${avail}" step="500" value="${r.troops}" style="flex:1">
@@ -1848,10 +2032,28 @@ export class Battle {
     SFX.drumRoll(10, 0.18); SFX.horn();
     this.log('p', '擂鼓進軍！');
     if (this.cfg.waterCut === 'p') this.log('e', '我軍水道被斷，士氣逐漸低落！');
+    if (this.state.food <= 0) { for (const s of this.squads) if (s.side === 'p') s.morale = Math.min(s.morale, 70); this.log('e', '我軍糧草斷絕，士卒飢疲！'); }
+    if (this.cfg.flood) this.doFlood(this.cfg.flood);
+    if (this.cfg.playerLeaderExposed) {
+      const L = this.squads.find(s => s.side === 'p' && s.leader);
+      if (L) { L.troops = Math.round(L.troops * 0.25); L.max = L.troops; L.pos.y -= 45; L.home = L.pos.clone(); this.layoutSquad(L); this.placeSoldiers(L); this.rebuildBatches(); this.buildCards(); this.log('e', `${GENERALS[L.general]?.name || '主帥'}僅率少數輕兵在前修補鹿角！`); }
+    }
+    if (this.sides.e.asleep) this.log('p', '夜色掩護，我軍悄悄逼近敵營……');
+    if (this.weather === 'rain') this.log('p', '大雨滂沱：火攻難以奏效，弓弩威力下降。');
+    if (this.weather === 'fog') this.log('p', '大霧瀰漫，視野受阻，小心敵軍突襲。');
     if (this.cfg.waterCut === 'e') this.log('p', '敵軍水源已斷，軍心渙散！');
     return new Promise(resolve => { this.resolveFight = resolve; });
   }
 
+  doFlood(side) {
+    for (const s of this.squads) if (s.side === side && !s.dead) { s.troops *= 0.6; s.max *= 0.6; s.morale -= 30; }
+    this.sides[side].init *= 0.6;
+    this.log(side === 'e' ? 'p' : 'e', '秋雨連綿，漢水暴漲！洪水灌入營寨！');
+    const w = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: 0x5a6a5a, transparent: true, opacity: 0.75, roughness: 0.2 }));
+    w.rotation.x = -Math.PI / 2; w.position.y = -3; this.scene.add(w);
+    tween(3000, t => { w.position.y = -3 + Math.sin(t * Math.PI) * 4.2; }).then(() => this.scene.remove(w));
+    SFX.whoosh(0.5);
+  }
   checkEnd() {
     if (this.ending) return;
     const broken = (side) => {
@@ -1986,7 +2188,8 @@ export class Battle {
     }
     this.resolveFight({
       result, msg, pLost: Math.max(0, pLost), eLost: Math.max(0, eLost), captives, gold,
-      capturedGenerals: [...new Set(this.capturedE)], lostGenerals: [...new Set(this.capturedP)], deployed: this.deployed,
+      capturedGenerals: [...new Set(this.capturedE)], lostGenerals: [...new Set(this.capturedP)], deployed: this.deployed, enemyFaction: this.ef,
+      participants: this.squads.filter(s => s.side === 'p' && s.general).map(s => s.general),
     });
   }
 
@@ -2023,7 +2226,8 @@ export async function showResults(state, res, cfg) {
     </div>`;
   if (res.lostGenerals.length) html += `<p style="color:#ff9a8a">被俘將領：${res.lostGenerals.map(gname).join('、')}</p>`;
   state.troops = Math.max(0, state.troops - res.pLost);
-  for (const g of res.lostGenerals) state.lose(g, '被敵軍俘虜');
+  for (const g of res.lostGenerals) state.captured(g, res.enemyFaction);
+  for (const g of res.participants || []) state.addLoyalty(g, win ? 4 : -3);
   if (res.gold) state.gold += res.gold;
   await modal(html, [{ text: res.captives > 0 || res.capturedGenerals.length ? '處置俘虜' : '繼續', primary: true }]);
   if (res.captives > 0) {
@@ -2037,17 +2241,23 @@ export async function showResults(state, res, cfg) {
   for (const g of res.capturedGenerals) {
     if (state.generals.includes(g) || state.dead.includes(g)) continue;
     const G = GENERALS[g];
-    if (cfg.captiveScript?.[g]) { await cfg.captiveScript[g](state); continue; }
-    const k = await modal(`<div style="display:flex;gap:16px;align-items:center">${portrait(g, 100)}<div><h2 style="text-align:left;margin:0">俘獲敵將【${G.name}】</h2>
-      <p>${FACTIONS[G.f].full}・${G.title}　武力 ${G.war}　統率 ${G.lead}　智力 ${G.int}</p></div></div>`, [
+    if (cfg.captiveScript?.[g]) { const sc = cfg.captiveScript[g]; if (Array.isArray(sc)) await cfg.runSteps?.(sc); else await sc(state); hideDialog(); continue; }
+    const isRuler = G.ruler || ['caocao', 'caopi', 'caorui', 'liubei', 'sunquan'].includes(g);
+    const k = await modal(`<div style="display:flex;gap:16px;align-items:center">${portrait(g, 100)}<div><h2 style="text-align:left;margin:0">俘獲${isRuler ? '敵國之主' : '敵將'}【${G.name}】</h2>
+      <p>${FACTIONS[res.enemyFaction || G.f]?.full || ''}・${G.title}　武力 ${G.war}　統率 ${G.lead}　智力 ${G.int}　忠誠可能 ${isRuler ? '無' : '有'}</p></div></div>`, isRuler ? [
+      { text: '索取贖金（金 +3000）', primary: true, value: 3 }, { text: '以禮釋放（名望 +8、關係改善）', value: 1 }, { text: '斬首（名望 -15）', danger: true, value: 2 },
+    ] : [
       { text: '招降', primary: true, value: 0 }, { text: '釋放（名望 +3）', value: 1 }, { text: '斬首（名望 -5）', danger: true, value: 2 },
     ]);
+    if (k === 3) { state.gold += 3000; toast(`${G.name}交付贖金三千，被放歸`, 'gold'); continue; }
+    if (isRuler && k === 1) { state.renown += 8; if (res.enemyFaction) state.addRel(state.faction, res.enemyFaction, 25); toast(`以禮釋放${G.name}`, 'good'); continue; }
+    if (isRuler && k === 2) { state.kill(g); state.renown -= 15; state.flags['killed_' + g] = true; toast(`${G.name}被斬首！天下震動`, 'bad'); continue; }
     if (k === 0) {
-      const ch = G.ruler ? 0.02 : clamp(0.35 + (state.renown - 50) / 150 + (90 - G.int) / 300, 0.1, 0.85);
-      if (Math.random() < ch) { await say(g, '敗軍之將，承蒙不棄，願效犬馬之勞！'); hideDialog(); state.recruit(g); }
+      const ch = G.ruler || G.loyal ? 0.03 : clamp(0.35 + (state.renown - 50) / 150 + (90 - G.int) / 300, 0.1, 0.85);
+      if (Math.random() < ch) { await say(g, '敗軍之將，承蒙不棄，願效犬馬之勞！'); hideDialog(); state.recruit(g, 50); }
       else { await say(g, `吾受${FACTIONS[G.f].name}主厚恩，豈能事二主！要殺便殺！`); hideDialog(); state.prisoners.push(g); toast(`${G.name}拒降，收押獄中`, 'bad'); }
     } else if (k === 1) { state.renown += 3; toast(`釋放${G.name}，名望 +3`, 'good'); }
-    else { state.kill(g); state.renown -= 5; toast(`${G.name}被斬首`, 'bad'); }
+    else { state.kill(g); state.renown -= 5; for (const x of state.generals) if (GENERALS[x]?.f === G.f) state.addLoyalty(x, -8); toast(`${G.name}被斬首`, 'bad'); }
   }
   state.emit('hud');
 }

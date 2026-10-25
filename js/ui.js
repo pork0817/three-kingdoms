@@ -2,6 +2,8 @@
 import { FACTIONS, GENERALS } from './data.js';
 import { sleep } from './util.js';
 import { renderPortrait, NPC } from './figures.js';
+import { SETTINGS, TEXT_SPEED } from './settings.js';
+export const DLG = { fast: false, hook: null };
 
 export const root = () => document.getElementById('ui');
 
@@ -34,7 +36,11 @@ export function portrait(id, size = 96) {
 let dlg = null;
 function ensureDialog() {
   if (dlg && dlg.isConnected) return dlg;
-  dlg = el('div', 'dialog hidden', `<div class="dlg-portrait"></div><div class="dlg-body"><div class="dlg-name"></div><div class="dlg-text"></div><div class="dlg-next">▼</div></div>`, root());
+  dlg = el('div', 'dialog hidden', `<div class="dlg-portrait"></div><div class="dlg-body"><div class="dlg-name"></div><div class="dlg-text"></div><div class="dlg-next">▼</div></div><div class="dlg-ctl"><button class="dlg-auto" title="自動播放">自動</button><button class="dlg-ff" title="快轉">▶▶</button></div>`, root());
+  const au = dlg.querySelector('.dlg-auto'), ff = dlg.querySelector('.dlg-ff');
+  au.classList.toggle('on', SETTINGS.autoPlay);
+  au.onclick = (e) => { e.stopPropagation(); SETTINGS.autoPlay = !SETTINGS.autoPlay; au.classList.toggle('on', SETTINGS.autoPlay); };
+  ff.onclick = (e) => { e.stopPropagation(); DLG.fast = !DLG.fast; ff.classList.toggle('on', DLG.fast); };
   return dlg;
 }
 export function hideDialog() { if (dlg) dlg.classList.add('hidden'); }
@@ -51,21 +57,28 @@ export function say(speaker, text) {
   const tx = d.querySelector('.dlg-text');
   const nxt = d.querySelector('.dlg-next');
   nxt.style.visibility = 'hidden';
+  DLG.hook && DLG.hook(speaker);
   return new Promise(resolve => {
-    let i = 0, done = false, timer;
+    let i = 0, done = false, timer, autoT;
     const full = text;
-    const finish = () => { done = true; clearInterval(timer); tx.innerHTML = full; nxt.style.visibility = 'visible'; };
-    timer = setInterval(() => {
+    const speed = DLG.fast ? 0 : TEXT_SPEED[SETTINGS.textSpeed] ?? 28;
+    const finish = () => {
+      done = true; clearInterval(timer); tx.innerHTML = full; nxt.style.visibility = 'visible';
+      if (DLG.fast) autoT = setTimeout(() => { cleanup(); resolve(); }, 120);
+      else if (SETTINGS.autoPlay) autoT = setTimeout(() => { cleanup(); resolve(); }, 900 + full.length * 70);
+    };
+    if (!speed) setTimeout(finish, 0);
+    else timer = setInterval(() => {
       i += 1; tx.innerHTML = full.slice(0, i);
       if (i >= full.length) finish();
-    }, 28);
+    }, speed);
     const onClick = (e) => {
       e.stopPropagation();
       if (!done) { finish(); return; }
       cleanup(); resolve();
     };
     const onKey = (e) => { if (e.code === 'Space' || e.code === 'Enter') onClick(e); };
-    function cleanup() { d.removeEventListener('click', onClick); window.removeEventListener('keydown', onKey); }
+    function cleanup() { clearTimeout(autoT); d.removeEventListener('click', onClick); window.removeEventListener('keydown', onKey); }
     d.addEventListener('click', onClick);
     window.addEventListener('keydown', onKey);
   });
@@ -78,7 +91,7 @@ export function choose(prompt, options) {
     if (prompt) el('div', 'choice-prompt', prompt, wrap);
     options.forEach((o, i) => {
       const b = el('button', 'choice' + (o.disabled ? ' disabled' : ''),
-        `<span class="choice-text">${o.text}</span>${o.hist ? '<span class="tag hist">史實</span>' : ''}${o.hint ? `<span class="choice-hint">${o.hint}</span>` : ''}`, wrap);
+        `<span class="choice-text">${o.text}</span>${o.hist ? '<span class="tag hist">史實</span>' : ''}${o.yy ? '<span class="tag yy">演義</span>' : ''}${o.hint ? `<span class="choice-hint">${o.hint}</span>` : ''}`, wrap);
       if (!o.disabled) b.onclick = (e) => { e.stopPropagation(); wrap.remove(); resolve(i); };
     });
   });

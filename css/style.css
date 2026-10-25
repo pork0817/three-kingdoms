@@ -250,3 +250,76 @@ button { font-family: var(--font); }
 .hv-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-top: auto; }
 .hv-tip { font-size: 12px; color: #9a8a6a; }
 @media (max-width: 760px) { .hero-view { flex-direction: column; } .hv-stage { width: 100%; height: 320px; } }
+
+/* —— 新增介面 —— */
+.tag.yy { background: #2a4a6a; color: #cfe6ff; border: 1px solid #6aa0d8; }
+.choice .tag.hist + .tag.yy { right: 64px; }
+.hint-txt { font-size: 13px; color: #cdb88a; line-height: 1.6; }
+.btn-row { display: flex; gap: 6px; }
+.btn-row .btn { flex: 1; }
+.panel .btn-row .btn { width: auto; }
+.row-flex { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 6px; }
+.dev-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 8px; }
+.dev-btns .hint-txt { grid-column: 1 / 3; }
+.panel .dev-btns .btn { width: 100%; margin: 0; padding: 5px 4px; font-size: 12px; letter-spacing: 0; }
+.dialog .dlg-ctl { position: absolute; top: -14px; right: 16px; display: flex; gap: 6px; }
+.dlg-ctl button { background: rgba(20,12,6,.95); border: 1px solid rgba(216,180,106,.5); color: var(--gold); border-radius: 10px; font-size: 12px; padding: 2px 9px; cursor: pointer; font-family: var(--font); }
+.dlg-ctl button.on { background: #c9a04a; color: #1a120a; }
+.settings { min-width: min(480px, 94vw); }
+.set-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 10px 0; }
+.set-row input[type=range] { width: 200px; accent-color: #c9a04a; }
+.seg { display: flex; gap: 4px; }
+.set-note { font-size: 12px; color: #9a8a6a; }
+.fs-diff { margin-top: 14px; display: flex; gap: 6px; align-items: center; text-shadow: 0 1px 3px #000; }
+.fs-por { display: flex; justify-content: center; margin-bottom: 4px; }
+.fs-card .big { font-size: 44px; }
+.diplo { width: min(760px, 96vw); }
+.dip-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px; border: 1px solid rgba(216,180,106,.25); border-left: 4px solid var(--fc, #888); border-radius: 6px; margin: 6px 0; flex-wrap: wrap; }
+.dip-f { display: flex; gap: 10px; align-items: center; }
+.dip-a { display: flex; gap: 5px; flex-wrap: wrap; }
+.hud-toggle { display: none; position: absolute; right: 10px; top: 64px; z-index: 12; }
+.gcard small { color: #b9a77a; font-size: 11px; }
+.gcard .gift { padding: 1px 6px; font-size: 11px; margin-left: 4px; }
+.hud-top .item.counts span { margin-left: 4px; }
+
+/* —— 手機、平板 —— */
+#gl { touch-action: none; }
+@media (max-width: 820px), (pointer: coarse) and (max-height: 520px) {
+  .title-main { font-size: 64px; letter-spacing: 12px; margin-right: -12px; }
+  .title-sub { font-size: 15px; letter-spacing: 6px; margin-bottom: 26px; }
+  .title-btns { width: 200px; gap: 10px; }
+  .title-btns .btn { font-size: 16px; padding: 9px; }
+  .faction-select { justify-content: flex-start; padding: 20px 10px; overflow-y: auto; }
+  .fs-title { font-size: 24px; margin-bottom: 12px; }
+  .fs-cards { flex-direction: column; gap: 10px; width: 100%; align-items: center; }
+  .fs-card { width: min(420px, 94vw); padding: 10px 14px; display: grid; grid-template-columns: 70px 1fr; column-gap: 10px; }
+  .fs-card .fs-por { grid-row: 1 / 4; } .fs-card .big { display: none; } .fs-card .nm { text-align: left; margin: 0 0 4px; font-size: 18px; }
+  .fs-card .desc { min-height: 0; font-size: 13px; } .fs-card .meta { grid-column: 1 / 3; }
+  .hud-top { gap: 8px; padding: 6px 8px; font-size: 12px; }
+  .hud-top .emblem { width: 32px; height: 32px; font-size: 18px; }
+  .hud-top .fname, .hud-top .counts { display: none; }
+  .hud-toggle { display: block; top: 52px; }
+  .hud-right { display: none; top: 92px; right: 6px; left: 6px; width: auto; max-height: calc(100vh - 100px); overflow-y: auto; }
+  .hud-right.open { display: flex; }
+  .hud-bottom-left { display: none; }
+  .dialog { bottom: 8px; min-height: 110px; padding: 10px 12px; gap: 10px; }
+  .dialog .portrait3d, .dialog .portrait { width: 64px !important; height: 64px !important; }
+  .dlg-name { font-size: 16px; margin-bottom: 4px; } .dlg-text { font-size: 15px; line-height: 1.6; }
+  .choice-wrap { top: 56px; transform: translateX(-50%); max-height: 62vh; overflow-y: auto; }
+  .choice { font-size: 15px; padding: 10px 14px; }
+  .choice-prompt { font-size: 16px; }
+  .tc-text { font-size: 36px; letter-spacing: 8px; } .tc-sub { font-size: 15px; } .title-card.show .tc-line { width: 280px; }
+  .modal { min-width: 0; padding: 16px; } .res-grid { grid-template-columns: 1fr; }
+  .b-top { top: 4px; padding: 4px 8px; gap: 8px; } .b-side { width: 120px; } .b-side .nm { font-size: 11px; } .b-vs { font-size: 18px; }
+  .b-cards { left: 4px; right: 4px; transform: none; overflow-x: auto; bottom: 4px; justify-content: flex-start; }
+  .scard { min-width: 104px; width: 104px; font-size: 11px; }
+  .b-left { bottom: 104px; left: 4px; } .b-left > div:last-child { display: none; }
+  .b-orders { bottom: 160px; flex-wrap: wrap; justify-content: center; width: 90vw; }
+  .b-right { right: 4px; gap: 5px; } .tbtn { width: 50px; height: 50px; font-size: 20px; }
+  .b-log { width: 200px; font-size: 11px; top: 60px; }
+  .deploy { left: 4px; right: 4px; top: 4px; bottom: 4px; width: auto; }
+  .squad-label { font-size: 9px; }
+  .hero-view { flex-direction: column; } .hv-stage { width: 100%; height: 300px; }
+  .city-label { font-size: 11px; } .city-label.s3 { font-size: 13px; }
+  .faction-label { font-size: 40px; }
+}

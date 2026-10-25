@@ -291,3 +291,31 @@ export function makeCatapult() {
   g.userData.arm = arm;
   return g;
 }
+
+// —— 戰船（水戰） ——
+export function makeShip(L, W, colorHex, big = false) {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5a3a20, roughness: 0.85 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x3a2414, roughness: 0.9 });
+  const red = new THREE.MeshStandardMaterial({ color: 0x8a2a1e, roughness: 0.7 });
+  const sailM = new THREE.MeshStandardMaterial({ color: 0xe8dcc0, roughness: 0.9, side: THREE.DoubleSide });
+  const flagM = new THREE.MeshStandardMaterial({ color: colorHex, side: THREE.DoubleSide });
+  const add = (geo, m, x, y, z, rx = 0, ry = 0, rz = 0) => { const me = new THREE.Mesh(geo, m); me.position.set(x, y, z); me.rotation.set(rx, ry, rz); me.castShadow = true; me.receiveShadow = true; g.add(me); return me; };
+  add(new THREE.BoxGeometry(W, 1.8, L), wood, 0, 0.2, 0);
+  const bow = add(new THREE.CylinderGeometry(0.05, W * 0.42, W * 0.9, 4, 1), wood, 0, 0.35, -L / 2 - W * 0.3, -Math.PI / 2, 0, Math.PI / 4);
+  bow.scale.set(1, 1, 0.45);
+  add(new THREE.BoxGeometry(W + 0.3, 0.25, L + 0.2), dark, 0, 1.15, 0);
+  for (const sx of [-1, 1]) add(new THREE.BoxGeometry(0.15, 0.6, L), red, sx * (W / 2), 1.5, 0);
+  // 船樓
+  const cast = add(new THREE.BoxGeometry(W * 0.7, big ? 3.5 : 2, L * 0.22), red, 0, 1.25 + (big ? 1.75 : 1), L * 0.36);
+  add(new THREE.ConeGeometry(W * 0.62, 1.6, 4), dark, 0, 1.25 + (big ? 3.5 : 2) + 0.8, L * 0.36, 0, Math.PI / 4);
+  const mh = big ? 13 : 9;
+  add(new THREE.CylinderGeometry(0.18, 0.22, mh, 8), dark, 0, mh / 2 + 1, -L * 0.08);
+  const sail = add(new THREE.PlaneGeometry(W * 0.85, mh * 0.42, 1, 4), sailM, 0, mh * 0.62 + 1, -L * 0.08 + 0.25);
+  add(new THREE.PlaneGeometry(2.4, 1.4), flagM, 1.2, mh + 1.2, -L * 0.08);
+  // 槳
+  for (let i = 0; i < 6; i++) for (const sx of [-1, 1]) add(new THREE.BoxGeometry(0.1, 0.1, 3.2), dark, sx * (W / 2 + 1.2), 0.3, -L * 0.35 + i * L * 0.14, 0, sx * 1.2, sx * 0.5);
+  g.userData.sail = sail;
+  g.userData.deck = 1.6;
+  return g;
+}
