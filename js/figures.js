@@ -1,0 +1,678 @@
+// 精細人物模型：參數化的人體、戰馬、四輪車、兵器；主要武將有專屬造型，並可渲染成 3D 頭像
+import * as THREE from 'three';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GENERALS, FACTIONS } from './data.js';
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const UP = V(0, 1, 0);
+const _c = new THREE.Color();
+export function M(pos = [0, 0, 0], rot = [0, 0, 0], scl = [1, 1, 1]) {
+  return new THREE.Matrix4().compose(V(...pos), new THREE.Quaternion().setFromEuler(new THREE.Euler(...rot)), V(...scl));
+}
+function between(a, b, sx = 1, sz = 1) {
+  const d = b.clone().sub(a); const len = d.length();
+  const q = new THREE.Quaternion().setFromUnitVectors(UP, d.normalize());
+  return new THREE.Matrix4().compose(a.clone().add(b).multiplyScalar(0.5), q, V(sx, len, sz));
+}
+
+// —— 幾何收集器：依材質分組，最後各自合併成一個網格 ——
+export class Builder {
+  constructor(lod = 1) { this.lod = lod; this.b = {}; this.base = null; }
+  s(n) { return this.lod ? n : Math.max(4, Math.round(n * 0.45)); }
+  add(key, geo, color, m) {
+    geo.deleteAttribute('uv');
+    if (!geo.index) geo = mergeVertices(geo);
+    if (m) geo.applyMatrix4(m);
+    if (this.base) geo.applyMatrix4(this.base);
+    const n = geo.attributes.position.count, col = new Float32Array(n * 3);
+    _c.set(color);
+    for (let i = 0; i < n; i++) { col[i * 3] = _c.r; col[i * 3 + 1] = _c.g; col[i * 3 + 2] = _c.b; }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    (this.b[key] ||= []).push(geo);
+  }
+  box(k, c, w, h, d, m) { this.add(k, new THREE.BoxGeometry(w, h, d), c, m); }
+  cyl(k, c, rt, rb, h, seg, m, open = false) { this.add(k, new THREE.CylinderGeometry(rt, rb, h, this.s(seg), 1, open), c, m); }
+  sph(k, c, r, m, ws = 12, hs = 9, ts = 0, tl = Math.PI) { this.add(k, new THREE.SphereGeometry(r, this.s(ws), this.s(hs), 0, Math.PI * 2, ts, tl), c, m); }
+  cone(k, c, r, h, seg, m) { this.add(k, new THREE.ConeGeometry(r, h, this.s(seg)), c, m); }
+  limb(k, c, a, b, r1, r2, seg = 10, joint = true) {
+    this.add(k, new THREE.CylinderGeometry(r2, r1, 1, this.s(seg)), c, between(a, b));
+    if (joint && this.lod) this.sph(k, c, r2 * 1.02, M([b.x, b.y, b.z]), 8, 6);
+  }
+  shape(k, c, shape, depth, m) {
+    this.add(k, new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, curveSegments: this.lod ? 8 : 3 }), c, m);
+  }
+  merged() { const o = {}; for (const k in this.b) o[k] = mergeGeometries(this.b[k]); return o; }
+}
+
+// —— 人體 ——
+// s: { armored, armor, cloth, trim, pants, skin, face, hair, beard, beardColor, head, plume, cape, robe, female, tint, arms, weapon }
+export function buildHuman(B, s, pose = 'stand') {
+  const lod = B.lod;
+  const skin = s.skin ?? 0xe2b48c, face = s.face ?? skin;
+  const T = (shade = 1) => s.tint ? ['tint', new THREE.Color(shade, shade, shade).getHex()] : ['cloth', shade === 1 ? s.cloth : new THREE.Color(s.cloth).multiplyScalar(shade).getHex()];
+  const armor = s.armor ?? 0x6a6f78, trim = s.trim ?? 0xc9a04a, pants = s.pants ?? 0x2e2620, boot = 0x1e1712;
+  const hipY = 0.95;
+  // 腿
+  for (const sx of [-1, 1]) {
+    const hip = V(sx * 0.1, hipY, 0.0);
+    let knee, ankle;
+    if (pose === 'ride') { knee = V(sx * 0.28, 0.76, -0.26); ankle = V(sx * 0.31, 0.36, -0.18); }
+    else if (pose === 'sit') { knee = V(sx * 0.13, hipY + 0.02, -0.42); ankle = V(sx * 0.13, hipY - 0.4, -0.46); }
+    else { knee = V(sx * 0.11, 0.52, -0.02); ankle = V(sx * 0.11, 0.1, 0); }
+    B.limb('cloth', pants, hip, knee, 0.085, 0.07, 10);
+    B.limb('cloth', boot, knee, ankle, 0.068, 0.058, 10);
+    B.box('cloth', boot, 0.11, 0.08, 0.22, M([ankle.x, ankle.y - 0.04, ankle.z - 0.06]));
+    if (s.armored && lod) B.limb('metal', armor, knee.clone().lerp(ankle, 0.05), knee.clone().lerp(ankle, 0.6), 0.075, 0.068, 10, false);
+  }
+  // 下襬
+  const [ck, cc] = T(1), [ck2, cc2] = T(0.72);
+  if (s.robe && pose === 'stand') B.cyl(ck, cc, 0.19, 0.4, 0.92, 18, M([0, 0.57, 0]), true);
+  else if (pose === 'stand') B.cyl(ck, cc, 0.19, 0.3, 0.42, 16, M([0, 0.82, 0]), true);
+  else {
+    // 騎乘／坐姿：前後兩片衣襬
+    B.box(ck, cc, 0.36, 0.42, 0.04, M([0, 0.78, -0.12], [-0.9, 0, 0]));
+    B.box(ck, cc, 0.4, s.robe ? 0.6 : 0.42, 0.04, M([0, 0.72, 0.16], [0.35, 0, 0]));
+    B.cyl(ck, cc, 0.19, 0.25, 0.14, 14, M([0, 0.93, 0]), true);
+  }
+  if (s.armored) {
+    if (pose === 'stand') B.cyl('metal', armor, 0.2, 0.3, 0.3, 16, M([0, 0.86, 0], [0, 0, 0], [1, 1, 0.9]), true);
+    else for (const sx of [-1, 1]) B.box('metal', armor, 0.2, 0.3, 0.3, M([sx * 0.2, 0.84, -0.06], [0, 0, sx * 0.35]));
+  }
+  // 軀幹
+  B.cyl(ck, cc, 0.205, 0.17, 0.52, 16, M([0, 1.26, 0], [0, 0, 0], [1, 1, 0.72]));
+  if (s.armored) {
+    B.cyl('metal', armor, 0.222, 0.19, 0.32, 16, M([0, 1.35, 0], [0, 0, 0], [1, 1, 0.78]));
+    if (lod) {
+      for (let i = 0; i < 4; i++) B.add('metal', new THREE.TorusGeometry(0.2 - i * 0.006, 0.008, 4, 16), new THREE.Color(armor).multiplyScalar(0.7).getHex(), M([0, 1.24 + i * 0.075, 0], [Math.PI / 2, 0, 0], [1, 0.78, 1]));
+      // 護心鏡
+      B.cyl('gold', trim, 0.065, 0.065, 0.02, 16, M([0, 1.37, -0.17], [Math.PI / 2, 0, 0]));
+    }
+  } else if (lod) {
+    // 交領
+    B.box(ck2, cc2, 0.05, 0.42, 0.02, M([0.06, 1.3, -0.15], [0, 0, 0.45]));
+    B.box(ck2, cc2, 0.05, 0.42, 0.02, M([-0.06, 1.3, -0.15], [0, 0, -0.45]));
+  }
+  B.add('gold', new THREE.TorusGeometry(0.185, 0.032, 5, B.s(18)), s.belt ?? 0x4a3020, M([0, 1.03, 0], [Math.PI / 2, 0, 0], [1, 0.74, 1]));
+  if (lod) B.sph('gold', trim, 0.04, M([0, 1.03, -0.14], [0, 0, 0], [1, 1, 0.5]));
+  // 肩甲
+  if (s.armored) for (const sx of [-1, 1]) {
+    B.sph('metal', armor, 0.13, M([sx * 0.26, 1.47, 0], [0, 0, -sx * 0.55], [1, 0.75, 1.05]), 12, 8, 0, Math.PI * 0.55);
+    if (lod) B.sph('gold', trim, 0.03, M([sx * 0.3, 1.5, -0.02]));
+  }
+  // 頸、頭
+  B.cyl('skin', skin, 0.055, 0.06, 0.13, 10, M([0, 1.59, 0]));
+  B.add(ck2, new THREE.TorusGeometry(0.07, 0.025, 5, B.s(14)), cc2, M([0, 1.55, 0], [Math.PI / 2, 0, 0]));
+  const H = V(0, 1.725, 0);
+  B.sph('skin', face, 0.122, M([H.x, H.y, H.z], [0, 0, 0], [0.92, 1.1, 1]), 16, 12);
+  if (lod) {
+    for (const sx of [-1, 1]) {
+      B.sph('skin', 0xf4f0e8, 0.024, M([sx * 0.043, 1.742, -0.1], [0, 0, 0], [1.25, 0.8, 0.6]), 8, 6);
+      B.sph('dark', 0x1a120c, 0.013, M([sx * 0.043, 1.742, -0.112]), 6, 5);
+      B.box('hair', s.hair ?? 0x161210, 0.05, 0.012, 0.02, M([sx * 0.045, 1.77, -0.108], [0, 0, sx * (s.fierce ? 0.35 : -0.12)]));
+      B.sph('skin', face, 0.026, M([sx * 0.118, 1.725, 0.005], [0, 0, 0], [0.5, 1, 0.8]), 6, 5);
+    }
+    B.cone('skin', face, 0.02, 0.05, 6, M([0, 1.715, -0.125], [-Math.PI / 2 + 0.3, 0, 0]));
+    B.box('dark', 0x6a2a22, 0.04, 0.008, 0.01, M([0, 1.67, -0.112]));
+  }
+  // 頭髮
+  const hair = s.hair ?? 0x161210;
+  if (s.female) {
+    B.sph('hair', hair, 0.134, M([0, 1.74, 0.01], [0.45, 0, 0]), 14, 10, 0, Math.PI * 0.6);
+    B.cone('hair', hair, 0.12, 0.5, 10, M([0, 1.48, 0.1], [0.12, 0, 0]));
+    B.sph('hair', hair, 0.06, M([0, 1.86, 0.06]));
+  } else if (!['helmet', 'lion', 'tribal'].includes(s.head)) {
+    B.sph('hair', hair, 0.13, M([0, 1.742, 0.01], [0.5, 0, 0]), 14, 10, 0, Math.PI * 0.55);
+  }
+  buildBeard(B, s, face);
+  buildHead(B, s, armor, trim);
+  // 手臂
+  const arms = ARM_POSES[s.arms || 'weapon'](pose);
+  const hands = {};
+  for (const side of ['R', 'L']) {
+    const sx = side === 'R' ? 1 : -1;
+    const sh = V(sx * 0.255, 1.46, 0.0), el = arms[side][0], wr = arms[side][1];
+    B.limb(ck, cc, sh, el, 0.062, 0.052, 10);
+    if (s.robe && !s.armored) {
+      B.limb(ck, cc, el, wr, 0.06, 0.05, 10);
+      B.add(ck, new THREE.CylinderGeometry(0.15, 0.065, 1, B.s(12), 1, true), cc, between(el.clone().lerp(wr, 0.25), wr.clone().add(wr.clone().sub(el).multiplyScalar(0.12))));
+    } else {
+      B.limb(s.armored ? 'metal' : ck, s.armored ? armor : cc, el, wr, 0.055, 0.046, 10);
+    }
+    B.sph('skin', skin, 0.046, M([wr.x, wr.y, wr.z]));
+    hands[side] = wr;
+  }
+  // 披風
+  if (s.cape != null) {
+    const g = new THREE.PlaneGeometry(0.62, pose === 'stand' ? 1.15 : 1.0, 2, 6);
+    const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) { const y = p.getY(i), x = p.getX(i); p.setZ(i, ((0.5 - y) ** 2) * 0.25 + Math.abs(x) * 0.12); }
+    g.computeVertexNormals();
+    const [k] = T();
+    B.add(s.tint ? 'tint' : 'cape', g, s.tint ? 0xbbbbbb : s.cape, M([0, pose === 'stand' ? 0.95 : 1.0, 0.17], [pose === 'stand' ? 0.08 : 0.5, 0, 0]));
+  }
+  return hands;
+}
+
+const ARM_POSES = {
+  weapon: (pose) => ({ R: [V(0.36, 1.24, -0.1), V(0.33, 1.2, -0.36)], L: [V(-0.35, 1.24, -0.08), V(-0.24, 1.16, -0.34)] }),
+  spear: (pose) => ({ R: [V(0.36, 1.24, -0.06), V(0.34, 1.2, -0.3)], L: [V(-0.3, 1.26, -0.18), V(-0.1, 1.28, -0.4)] }),
+  fan: (pose) => ({ R: [V(0.33, 1.22, -0.12), V(0.17, 1.38, -0.26)], L: [V(-0.33, 1.22, -0.1), V(-0.2, 1.12, -0.28)] }),
+  twin: (pose) => ({ R: [V(0.37, 1.24, -0.12), V(0.36, 1.27, -0.38)], L: [V(-0.37, 1.24, -0.12), V(-0.36, 1.27, -0.38)] }),
+  bow: (pose) => ({ R: [V(0.3, 1.28, -0.14), V(0.12, 1.4, -0.3)], L: [V(-0.3, 1.38, -0.28), V(-0.18, 1.42, -0.58)] }),
+  down: (pose) => ({ R: [V(0.31, 1.2, 0.0), V(0.31, 0.96, -0.04)], L: [V(-0.31, 1.2, 0.0), V(-0.31, 0.96, -0.04)] }),
+};
+
+function buildBeard(B, s, face) {
+  if (!s.beard || s.female) return;
+  const c = s.beardColor ?? 0x15100c;
+  if (s.beard === 'short') {
+    B.cone('hair', c, 0.035, 0.08, 8, M([0, 1.615, -0.085], [Math.PI + 0.2, 0, 0]));
+    for (const sx of [-1, 1]) B.box('hair', c, 0.05, 0.012, 0.015, M([sx * 0.025, 1.688, -0.118], [0, 0, sx * 0.3]));
+  } else if (s.beard === 'long') {
+    B.cone('hair', c, 0.05, 0.3, 8, M([0, 1.52, -0.08], [Math.PI + 0.12, 0, 0]));
+    for (const sx of [-1, 1]) B.box('hair', c, 0.07, 0.014, 0.015, M([sx * 0.03, 1.685, -0.118], [0, 0, sx * 0.5]));
+  } else if (s.beard === 'thin') {
+    B.cone('hair', c, 0.025, 0.24, 6, M([0, 1.54, -0.08], [Math.PI + 0.1, 0, 0]));
+    for (const sx of [-1, 1]) B.box('hair', c, 0.06, 0.01, 0.01, M([sx * 0.03, 1.686, -0.118], [0, 0, sx * 0.6]));
+  } else if (s.beard === 'full') {
+    B.sph('hair', c, 0.1, M([0, 1.64, -0.045], [0, 0, 0], [1, 0.9, 0.8]), 12, 8, Math.PI * 0.45, Math.PI * 0.55);
+    B.cone('hair', c, 0.07, 0.16, 8, M([0, 1.55, -0.07], [Math.PI + 0.15, 0, 0]));
+  } else if (s.beard === 'bushy') {
+    // 燕頷虎鬚
+    B.sph('hair', c, 0.12, M([0, 1.65, -0.035], [0, 0, 0], [1.1, 0.95, 0.85]), 12, 8, Math.PI * 0.42, Math.PI * 0.58);
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 8 - 0.5) * 2.4;
+      B.cone('hair', c, 0.025, 0.16, 5, M([Math.sin(a) * 0.1, 1.6 - Math.cos(a) * 0.02, -0.06 + Math.abs(Math.sin(a)) * 0.04], [Math.PI + 0.3, 0, -a * 0.6]));
+    }
+  }
+}
+
+function buildHead(B, s, armor, trim) {
+  const H = 1.725;
+  const hk = s.head;
+  const metal = s.helmColor ?? armor;
+  if (hk === 'helmet' || hk === 'lion') {
+    B.sph('metal', metal, 0.145, M([0, H + 0.06, 0.012], [0.18, 0, 0], [1, 1.0, 1.02]), 16, 10, 0, Math.PI * 0.5);
+    B.add('metal', new THREE.TorusGeometry(0.142, 0.016, 5, B.s(18)), new THREE.Color(metal).multiplyScalar(0.8).getHex(), M([0, H + 0.06, 0.012], [Math.PI / 2 + 0.18, 0, 0]));
+    B.cyl('metal', metal, 0.14, 0.17, 0.12, 16, M([0, H + 0.0, 0.05], [0.25, 0, 0], [1, 1, 0.9]), true); // 護頸
+    if (B.lod) for (const sx of [-1, 1]) B.box('metal', metal, 0.02, 0.1, 0.07, M([sx * 0.132, H - 0.02, 0.02], [0, 0, sx * 0.1]));
+    B.cyl('gold', trim, 0.012, 0.02, 0.12, 6, M([0, H + 0.23, 0.02]));
+    if (hk === 'lion') {
+      B.sph('gold', 0xe0b040, 0.05, M([0, H + 0.14, -0.125], [0, 0, 0], [1.2, 1, 0.6]));
+      for (const sx of [-1, 1]) B.sph('gold', 0xe0b040, 0.02, M([sx * 0.03, H + 0.16, -0.15]));
+      B.sph('cloth', 0xf4f0e6, 0.09, M([0, H + 0.3, 0.06], [0.6, 0, 0], [0.6, 1.5, 0.6]));
+    } else {
+      B.box('gold', trim, 0.025, 0.06, 0.03, M([0, H + 0.14, -0.125], [-0.3, 0, 0]));
+    }
+    if (s.plume != null) {
+      const pk = s.tint ? 'tint' : 'cloth';
+      B.cone(pk, s.tint ? 0xffffff : s.plume, 0.05, 0.22, 8, M([0, H + 0.36, 0.03], [0.25, 0, 0]));
+      if (B.lod) B.cone(pk, s.tint ? 0xffffff : s.plume, 0.035, 0.3, 6, M([0, H + 0.28, 0.12], [1.6, 0, 0]));
+    }
+    if (s.feathers) for (const sx of [-1, 1]) B.cone('cloth', 0x8a6a2a, 0.012, 0.7, 4, M([sx * 0.08, H + 0.45, 0.05], [0.3, 0, sx * -0.35]));
+  } else if (hk === 'crown') {
+    // 冕冠
+    B.cyl('cloth', 0x15100c, 0.1, 0.11, 0.1, 12, M([0, H + 0.12, 0]));
+    B.box('cloth', 0x15100c, 0.36, 0.025, 0.24, M([0, H + 0.19, 0], [-0.08, 0, 0]));
+    B.box('gold', trim, 0.37, 0.008, 0.25, M([0, H + 0.205, 0], [-0.08, 0, 0]));
+    if (B.lod) for (const z of [-0.12, 0.12]) for (let i = 0; i < 6; i++) {
+      const x = -0.15 + i * 0.06;
+      B.cyl('gold', trim, 0.004, 0.004, 0.13, 4, M([x, H + 0.12, z + (z < 0 ? 0.01 : -0.01)]));
+      B.sph('gold', z < 0 ? 0xe04040 : 0x40a0e0, 0.012, M([x, H + 0.055, z]), 6, 4);
+    }
+    B.cyl('gold', trim, 0.006, 0.006, 0.34, 4, M([0, H + 0.1, 0], [0, 0, Math.PI / 2]));
+  } else if (hk === 'gold') {
+    // 金冠
+    B.cyl('gold', trim, 0.06, 0.08, 0.08, 12, M([0, H + 0.14, 0.02]));
+    B.box('gold', trim, 0.02, 0.18, 0.02, M([0, H + 0.16, 0.02], [0, 0, Math.PI / 2]));
+  } else if (hk === 'guanjin') {
+    // 綸巾
+    B.sph('cloth', s.hatColor ?? 0x3a4a5a, 0.135, M([0, H + 0.05, 0.02], [0.35, 0, 0], [1, 0.95, 1.05]), 14, 10, 0, Math.PI * 0.5);
+    B.box('cloth', s.hatColor ?? 0x3a4a5a, 0.1, 0.12, 0.16, M([0, H + 0.15, 0.03]));
+    if (B.lod) for (const sx of [-1, 1]) B.box('cloth', s.hatColor ?? 0x3a4a5a, 0.035, 0.32, 0.01, M([sx * 0.05, H - 0.1, 0.14], [0.25, 0, sx * 0.15]));
+  } else if (hk === 'jinxian') {
+    // 進賢冠
+    B.sph('hair', 0x161210, 0.13, M([0, H + 0.015, 0.01], [0.5, 0, 0]), 14, 10, 0, Math.PI * 0.55);
+    B.box('cloth', 0x15100c, 0.12, 0.2, 0.03, M([0, H + 0.17, -0.02], [0.45, 0, 0]));
+    B.box('cloth', 0x15100c, 0.14, 0.05, 0.16, M([0, H + 0.1, 0.03]));
+  } else if (hk === 'headband') {
+    B.add('cloth', new THREE.TorusGeometry(0.125, 0.018, 4, B.s(16)), s.bandColor ?? 0xb02020, M([0, H + 0.05, 0], [Math.PI / 2 + 0.1, 0, 0], [0.95, 1, 1]));
+    B.sph('hair', s.hair ?? 0x161210, 0.05, M([0, H + 0.16, 0.04]));
+    if (B.lod) for (const sx of [-1, 1]) B.box('cloth', s.bandColor ?? 0xb02020, 0.02, 0.25, 0.008, M([sx * 0.03, H - 0.05, 0.14], [0.4, 0, sx * 0.2]));
+  } else if (hk === 'tribal') {
+    B.sph('hair', s.hair ?? 0x161210, 0.13, M([0, H + 0.015, 0.01], [0.5, 0, 0]), 14, 10, 0, Math.PI * 0.55);
+    B.add('gold', new THREE.TorusGeometry(0.13, 0.025, 5, B.s(16)), 0xc08030, M([0, H + 0.07, 0], [Math.PI / 2, 0, 0]));
+    const cols = [0xd03020, 0xf0c040, 0x2080a0, 0xf0f0e0];
+    for (let i = 0; i < (B.lod ? 9 : 5); i++) {
+      const a = (i / ((B.lod ? 9 : 5) - 1) - 0.5) * 2.2;
+      B.cone('cloth', cols[i % 4], 0.025, 0.36, 5, M([Math.sin(a) * 0.12, H + 0.25, Math.cos(a) * 0.06 + 0.02], [0.2 + Math.cos(a) * 0.2, 0, -a * 0.35]));
+    }
+  } else if (hk === 'bun' || hk == null) {
+    B.sph('hair', s.hair ?? 0x161210, 0.05, M([0, H + 0.15, 0.02]));
+    if (B.lod) B.cyl('gold', 0xc9a04a, 0.006, 0.006, 0.16, 4, M([0, H + 0.15, 0.02], [0, 0, Math.PI / 2]));
+  }
+  if (s.female && B.lod) {
+    for (const sx of [-1, 1]) B.sph('gold', 0xf0d060, 0.015, M([sx * 0.12, H - 0.04, 0]));
+  }
+}
+
+// —— 兵器：以握把為原點，+Y 為槍尖方向 ——
+export function buildWeapon(B, type, s = {}) {
+  const wood = s.shaft ?? 0x4a3020, steel = 0xd4d8de, gold = 0xc9a04a;
+  const shaft = (len, r = 0.022, from = -0.9) => B.cyl('wood', wood, r, r, len, 8, M([0, from + len / 2, 0]));
+  if (type === 'spear' || type === 'silverSpear') {
+    shaft(2.7, 0.02);
+    B.add('steel', new THREE.OctahedronGeometry(0.07, 0), steel, M([0, 1.95, 0], [0, 0, 0], [0.6, 3.4, 0.22]));
+    B.cone('cloth', s.tassel ?? 0xc02020, 0.06, 0.16, 8, M([0, 1.66, 0], [Math.PI, 0, 0]));
+    B.cyl('gold', gold, 0.03, 0.025, 0.06, 8, M([0, 1.74, 0]));
+  } else if (type === 'snake') {
+    shaft(2.9, 0.023);
+    const sh = new THREE.Shape();
+    const N = 16, L = 0.55, w = 0.035;
+    for (let i = 0; i <= N; i++) { const t = i / N; const x = Math.sin(t * Math.PI * 3) * 0.03 + w * (1 - t); i ? sh.lineTo(x, t * L) : sh.moveTo(x, 0); }
+    for (let i = N; i >= 0; i--) { const t = i / N; sh.lineTo(Math.sin(t * Math.PI * 3) * 0.03 - w * (1 - t), t * L); }
+    B.shape('steel', steel, sh, 0.012, M([0, 2.0, -0.006]));
+    B.cone('cloth', 0x101010, 0.06, 0.16, 8, M([0, 1.94, 0], [Math.PI, 0, 0]));
+  } else if (type === 'guandao' || type === 'dao') {
+    shaft(2.5, 0.025);
+    const sh = new THREE.Shape();
+    sh.moveTo(0, 0); sh.lineTo(0, 0.62); sh.quadraticCurveTo(0.3, 0.5, 0.24, 0.12); sh.quadraticCurveTo(0.18, 0.0, 0.08, -0.04); sh.lineTo(0, 0);
+    B.shape('steel', steel, sh, 0.014, M([0.015, 1.6, -0.007]));
+    if (type === 'guandao') { B.sph('gold', gold, 0.05, M([0, 1.58, 0]), 8, 6); B.cone('cloth', 0x207040, 0.05, 0.14, 8, M([0, 1.48, 0], [Math.PI, 0, 0])); }
+    else B.cyl('gold', gold, 0.04, 0.03, 0.06, 8, M([0, 1.58, 0]));
+  } else if (type === 'ji') {
+    shaft(2.6, 0.022);
+    B.add('steel', new THREE.OctahedronGeometry(0.06, 0), steel, M([0, 1.85, 0], [0, 0, 0], [0.6, 3, 0.22]));
+    const sh = new THREE.Shape();
+    sh.moveTo(0, 0); sh.quadraticCurveTo(0.22, 0.05, 0.26, 0.25); sh.quadraticCurveTo(0.14, 0.12, 0, 0.12); sh.lineTo(0, 0);
+    B.shape('steel', steel, sh, 0.012, M([0.015, 1.52, -0.006]));
+    B.cone('cloth', s.tassel ?? 0xc02020, 0.05, 0.14, 8, M([0, 1.45, 0], [Math.PI, 0, 0]));
+  } else if (type === 'axe') {
+    shaft(2.3, 0.026);
+    const sh = new THREE.Shape();
+    sh.moveTo(0, 0); sh.lineTo(0.06, -0.06); sh.quadraticCurveTo(0.38, 0.1, 0.06, 0.48); sh.lineTo(0, 0.4); sh.lineTo(0, 0);
+    B.shape('steel', steel, sh, 0.02, M([0.02, 1.0, -0.01]));
+    B.cone('steel', steel, 0.03, 0.15, 6, M([0, 1.48, 0]));
+  } else if (type === 'sword' || type === 'twin') {
+    B.box('steel', steel, 0.038, 0.72, 0.008, M([0, 0.47, 0]));
+    B.cone('steel', steel, 0.019, 0.08, 4, M([0, 0.87, 0], [0, Math.PI / 4, 0], [1, 1, 0.3]));
+    B.box('gold', gold, 0.13, 0.025, 0.035, M([0, 0.1, 0]));
+    B.cyl('wood', 0x2a1810, 0.016, 0.016, 0.15, 6, M([0, 0.02, 0]));
+    B.sph('gold', gold, 0.022, M([0, -0.06, 0]), 6, 4);
+  } else if (type === 'fan') {
+    B.cyl('wood', 0x3a2414, 0.012, 0.012, 0.14, 6, M([0, 0.02, 0]));
+    const n = B.lod ? 11 : 5;
+    for (let i = 0; i < n; i++) {
+      const a = (i / (n - 1) - 0.5) * 1.5;
+      B.add('cloth', new THREE.CircleGeometry(1, B.s(10)), 0xf6f3ea, new THREE.Matrix4().makeRotationZ(-a).multiply(M([0, 0.22, 0], [0, 0, 0], [0.045, 0.16, 1])).premultiply(M([0, 0.07, 0])));
+    }
+    B.sph('cloth', 0xe8e0d0, 0.03, M([0, 0.09, 0]), 8, 6);
+  } else if (type === 'bow') {
+    B.add('wood', new THREE.TorusGeometry(0.5, 0.016, 5, B.s(16), 2.2), 0x5a3a1e, M([0, 0, 0], [0, Math.PI / 2, Math.PI - 1.1 + Math.PI / 2]));
+  } else if (type === 'knife') {
+    B.box('steel', steel, 0.04, 0.3, 0.006, M([0, 0.2, 0]));
+    B.cyl('wood', 0xa02020, 0.014, 0.014, 0.1, 6, M([0, 0.0, 0]));
+  } else if (type === 'whip') {
+    B.cyl('wood', 0x2a1810, 0.014, 0.008, 0.9, 6, M([0, 0.4, 0]));
+  }
+}
+
+// 依姿勢擺放兵器的矩陣（握在手中）
+function weaponPlacement(type, hands, pose) {
+  const R = hands.R, L = hands.L;
+  const at = (h, rot) => M([h.x, h.y, h.z], rot);
+  switch (type) {
+    case 'spear': case 'silverSpear': case 'snake': case 'ji':
+      return [at(R, pose === 'stand' ? [-0.15, 0, 0] : [-0.95, 0, 0.05])];
+    case 'guandao': case 'dao': case 'axe':
+      return [at(R, pose === 'stand' ? [-0.12, Math.PI / 2, 0] : [-0.7, Math.PI / 2, 0.1])];
+    case 'sword': return [at(R, [-0.9, 0, 0.1])];
+    case 'twin': return [at(R, [-0.85, 0, 0.12]), at(L, [-0.85, 0, -0.12])];
+    case 'fan': return [at(R, [-0.25, 0, 0.15])];
+    case 'bow': return [at(L, [0, 0, 0])];
+    case 'knife': return [at(R, [-0.6, 0, 0.3])];
+    default: return [];
+  }
+}
+
+// —— 戰馬 ——
+export function buildHorse(B, s = {}) {
+  const c = s.color ?? 0x6b4428, mane = s.mane ?? 0x1c140e, lod = B.lod;
+  const legC = s.legColor ?? c;
+  B.sph('horse', c, 0.5, M([0, 1.16, 0.02], [0, 0, 0], [0.54, 0.58, 1.42]), 18, 12);
+  B.sph('horse', c, 0.33, M([0, 1.2, -0.52], [0, 0, 0], [0.95, 1.05, 1]), 14, 10);
+  B.sph('horse', c, 0.35, M([0, 1.22, 0.52], [0, 0, 0], [1, 1, 1]), 14, 10);
+  B.limb('horse', c, V(0, 1.32, -0.62), V(0, 1.9, -0.95), 0.21, 0.13, 12, false);
+  B.sph('horse', c, 0.135, M([0, 1.92, -0.98]), 10, 8);
+  B.limb('horse', c, V(0, 1.95, -1.0), V(0, 1.72, -1.38), 0.105, 0.075, 10, false);
+  B.sph('horse', s.muzzle ?? new THREE.Color(c).multiplyScalar(0.7).getHex(), 0.08, M([0, 1.72, -1.38], [0, 0, 0], [0.95, 0.9, 1.1]), 10, 8);
+  for (const sx of [-1, 1]) {
+    B.cone('horse', c, 0.03, 0.1, 6, M([sx * 0.055, 2.08, -0.98], [-0.2, 0, sx * 0.2]));
+    if (lod) B.sph('dark', 0x0a0806, 0.022, M([sx * 0.08, 1.92, -1.1]), 6, 5);
+  }
+  // 鬃毛
+  B.add('mane', new THREE.BoxGeometry(1, 1, 1), mane, between(V(0, 1.46, -0.5), V(0, 2.04, -0.93), 0.05, 0.16).multiply(M([0, 0, 0.45])));
+  B.box('mane', mane, 0.05, 0.12, 0.08, M([0, 2.05, -1.05], [0.4, 0, 0]));
+  // 尾
+  B.sph('mane', mane, 0.08, M([0, 1.3, 0.9]), 8, 6);
+  B.limb('mane', mane, V(0, 1.3, 0.92), V(0, 0.72, 1.1), 0.075, 0.03, 8, false);
+  // 腿
+  for (const [x, z, front] of [[-0.17, -0.55, 1], [0.17, -0.55, 1], [-0.18, 0.56, 0], [0.18, 0.56, 0]]) {
+    const top = V(x, 1.02, z), knee = V(x, 0.56, z + (front ? -0.03 : 0.07)), fet = V(x, 0.14, z + (front ? -0.01 : 0.02));
+    if (!front) B.sph('horse', c, 0.2, M([x, 1.08, z], [0, 0, 0], [0.7, 1.2, 1]), 10, 8);
+    B.limb('horse', c, top, knee, front ? 0.1 : 0.12, 0.06, 10);
+    B.limb('horse', legC, knee, fet, 0.05, 0.042, 8);
+    B.cyl('dark', 0x1a1410, 0.05, 0.062, 0.11, 8, M([fet.x, fet.y - 0.06, fet.z]));
+  }
+  // 鞍具
+  const [tk, tc] = s.tint ? ['tint', 0xffffff] : ['cloth', s.cloth ?? 0x8a2a1e];
+  B.box(tk, tc, 0.64, 0.03, 0.72, M([0, 1.52, 0.04]));
+  for (const sx of [-1, 1]) B.box(tk, tc, 0.02, 0.34, 0.66, M([sx * 0.32, 1.37, 0.04]));
+  if (lod) for (const sx of [-1, 1]) B.box('gold', s.trim ?? 0xc9a04a, 0.025, 0.03, 0.67, M([sx * 0.322, 1.2, 0.04]));
+  B.box('leather', 0x4a2e18, 0.34, 0.1, 0.5, M([0, 1.58, 0.02]));
+  B.box('leather', 0x4a2e18, 0.3, 0.14, 0.06, M([0, 1.65, -0.2]));
+  B.box('leather', 0x4a2e18, 0.34, 0.12, 0.06, M([0, 1.64, 0.25]));
+  if (lod) {
+    for (const sx of [-1, 1]) {
+      B.cyl('leather', 0x3a2414, 0.008, 0.008, 0.9, 4, M([sx * 0.3, 0.98, -0.18]));
+      B.add('gold', new THREE.TorusGeometry(0.04, 0.008, 4, 8), 0x8a8a8a, M([sx * 0.31, 0.5, -0.18], [0, Math.PI / 2, 0]));
+    }
+    B.add('leather', new THREE.TorusGeometry(0.085, 0.012, 4, 12), 0x3a2414, M([0, 1.73, -1.3], [0.4, 0, 0], [1, 1.1, 1]));
+    B.add('leather', new THREE.TorusGeometry(0.115, 0.01, 4, 12), 0x3a2414, M([0, 1.92, -1.02], [1.2, 0, 0], [1, 1.2, 1]));
+    if (s.tassels) for (const z of [-0.65, 0.6]) B.cone('cloth', 0xc02020, 0.06, 0.14, 8, M([0, z < 0 ? 1.55 : 1.45, z], [Math.PI, 0, 0]));
+  }
+  if (s.barding) {
+    B.sph('metal', s.barding, 0.36, M([0, 1.2, -0.56], [0, 0, 0], [1.0, 1.1, 1.05]), 14, 10, 0, Math.PI * 0.7);
+    B.limb('metal', s.barding, V(0, 1.4, -0.66), V(0, 1.86, -0.94), 0.225, 0.15, 12, false);
+    B.box('metal', s.barding, 0.12, 0.22, 0.3, M([0, 1.95, -1.15], [0.9, 0, 0]));
+  }
+}
+
+// —— 四輪車（諸葛亮） ——
+function buildCart(B) {
+  const lac = 0x6a1c14, wood = 0x5a3a1e, gold = 0xc9a04a;
+  B.box('wood', lac, 0.9, 0.08, 1.05, M([0, 0.62, 0]));
+  B.box('wood', lac, 0.72, 0.1, 0.6, M([0, 0.75, 0.05]));
+  B.box('wood', lac, 0.74, 0.55, 0.06, M([0, 1.05, 0.38], [-0.15, 0, 0]));
+  for (const sx of [-1, 1]) { B.box('wood', lac, 0.06, 0.25, 0.55, M([sx * 0.38, 0.92, 0.08])); B.box('gold', gold, 0.07, 0.03, 0.56, M([sx * 0.38, 1.05, 0.08])); }
+  for (const [x, z] of [[-0.5, -0.38], [0.5, -0.38], [-0.5, 0.38], [0.5, 0.38]]) {
+    B.add('wood', new THREE.TorusGeometry(0.3, 0.03, 6, B.s(20)), wood, M([x, 0.32, z], [0, Math.PI / 2, 0]));
+    B.cyl('gold', gold, 0.05, 0.05, 0.08, 8, M([x, 0.32, z], [0, 0, Math.PI / 2]));
+    if (B.lod) for (let i = 0; i < 6; i++) B.box('wood', wood, 0.02, 0.56, 0.02, M([x, 0.32, z], [i * Math.PI / 6, 0, 0]));
+  }
+  B.cyl('wood', wood, 0.02, 0.02, 0.6, 6, M([0, 0.6, -0.8], [Math.PI / 2 - 0.3, 0, 0]));
+}
+
+// ════════════════ 主要人物造型 ════════════════
+const WEI_A = 0x3e4f6e, WEI_C = 0x1f2d4e, SHU_A = 0x7a6a3a, SHU_C = 0x2f5a32, WU_A = 0x6a2a22, WU_C = 0x8e2a1e;
+export const HERO = {
+  // 魏
+  caopi: { head: 'crown', beard: 'short', armored: true, armor: 0x2a3044, cloth: 0x1a1f38, trim: 0xe0b040, weapon: 'sword', arms: 'weapon', horse: { color: 0x1a1612 }, cape: 0x7a1a1a, bio: '曹操次子，受漢禪即帝位，建立曹魏。著《典論》，文采斐然。' },
+  caorui: { head: 'crown', beard: null, cloth: 0x1f2540, trim: 0xe0b040, robe: true, weapon: 'sword', horse: { color: 0xe8e0d0 }, cape: 0x3a1a4a, bio: '魏明帝。曹丕之子，沉毅好斷，任用司馬懿、曹真抵禦蜀吳。' },
+  caoren: { head: 'helmet', beard: 'full', armored: true, armor: 0x5a6274, cloth: WEI_C, plume: 0x2a3a8a, weapon: 'ji', horse: { color: 0x5a3a22, barding: 0x4a5060 }, cape: 0x1a2a5a, fierce: true, bio: '曹操從弟，魏國大司馬。善守，樊城之戰力拒關羽。' },
+  caoxiu: { head: 'helmet', beard: 'short', armored: true, armor: 0x4a5a78, cloth: WEI_C, plume: 0xc02020, weapon: 'spear', horse: { color: 0x7a5232 }, cape: 0x2a3a6a, bio: '曹操族子，「此吾家千里駒也」。石亭之戰中周魴詐降之計。' },
+  caozhen: { head: 'helmet', beard: 'short', armored: true, armor: 0x485876, cloth: WEI_C, plume: 0x2a3a8a, weapon: 'spear', horse: { color: 0x3a2a1e }, cape: 0x1a2a5a, bio: '曹操養子，魏大將軍，多次抵禦諸葛亮北伐。' },
+  zhangliao: { head: 'helmet', beard: 'short', armored: true, armor: 0x2c3a58, cloth: 0x15203a, plume: 0x1a1a1a, weapon: 'ji', horse: { color: 0x141210, barding: 0x3a4660 }, cape: 0x101a30, fierce: true, bio: '合肥之戰以八百破十萬，威震逍遙津，江東小兒聞名止啼。' },
+  zhanghe: { head: 'helmet', beard: 'short', armored: true, armor: 0x5a6478, cloth: WEI_C, plume: 0x2a6a3a, weapon: 'spear', horse: { color: 0x8a6440 }, cape: 0x2a3a5a, bio: '河北名將，識變數，善處營陳。街亭大破馬謖。' },
+  xuhuang: { head: 'helmet', beard: 'full', armored: true, armor: 0x4a525e, cloth: WEI_C, weapon: 'axe', horse: { color: 0x6b4428 }, cape: 0x1a2a4a, bio: '治軍嚴整，有周亞夫之風，揮大斧解樊城之圍。' },
+  simayi: { head: 'jinxian', beard: 'long', beardColor: 0x2a2420, cloth: 0x18141e, trim: 0x8a6ab0, robe: true, weapon: 'sword', arms: 'weapon', horse: { color: 0x2a2018 }, cape: 0x3a2a4a, bio: '深沉有謀，鷹視狼顧。五丈原堅壁不出，熬死諸葛亮。' },
+  xiahoushang: { head: 'helmet', beard: 'short', armored: true, armor: WEI_A, cloth: WEI_C, plume: 0xd0d0d0, weapon: 'spear', horse: { color: 0x9a7a5a } },
+  xiahoumao: { head: 'gold', beard: null, cloth: 0x4a5a8a, robe: true, weapon: 'sword', horse: { color: 0xe8e0d0 }, bio: '夏侯惇之子，娶曹操之女，怯而無謀。' },
+  guohuai: { head: 'helmet', beard: 'short', armored: true, armor: WEI_A, cloth: WEI_C, plume: 0x2a3a8a, weapon: 'spear', horse: { color: 0x5a3a22 } },
+  haozhao: { head: 'helmet', beard: 'full', armored: true, armor: 0x5a5a5a, cloth: 0x2a2a3a, plume: 0x8a1a1a, weapon: 'sword', arms: 'weapon', horse: { color: 0x4a3020 }, fierce: true, bio: '以千餘人守陳倉，拒諸葛亮數萬大軍二十餘日。' },
+  manchong: { head: 'helmet', beard: 'long', armored: true, armor: 0x485060, cloth: 0x1a2a4a, weapon: 'sword', horse: { color: 0x3a2a1e }, bio: '剛毅多智，鎮守合肥新城，屢挫孫權。' },
+  jiakui: { head: 'jinxian', beard: 'short', cloth: 0x2a3a5a, robe: true, weapon: 'sword', horse: { color: 0x7a5a3a } },
+  changdiao: { head: 'helmet', beard: 'short', armored: true, armor: WEI_A, cloth: WEI_C, weapon: 'dao', horse: { color: 0x6b4428 } },
+  caotai: { head: 'helmet', beard: null, armored: true, armor: WEI_A, cloth: WEI_C, plume: 0xc02020, weapon: 'spear', horse: { color: 0x8a6440 } },
+  // 蜀
+  liubei: { head: 'gold', beard: 'short', armored: true, armor: 0xb09040, cloth: 0x2a6a3a, trim: 0xf0d060, weapon: 'twin', arms: 'twin', horse: { color: 0xf0ece0, cloth: 0x2a6a3a, tassels: true }, cape: 0xd4b040, bio: '漢中山靖王之後，仁德布於四海。雙股劍，乘的盧馬。' },
+  zhugeliang: { head: 'guanjin', hatColor: 0x2a3850, beard: 'thin', cloth: 0xf2efe6, trim: 0x2a3a5a, robe: true, weapon: 'fan', arms: 'fan', mount: 'cart', cape: null, bio: '臥龍先生，羽扇綸巾。鞠躬盡瘁，死而後已。' },
+  zhaoyun: { head: 'helmet', helmColor: 0xd8dce4, beard: null, armored: true, armor: 0xc8ccd6, cloth: 0xeceae4, plume: 0xf8f8f8, weapon: 'silverSpear', arms: 'spear', tassel: 0xf0f0f0, horse: { color: 0xf6f4ee, cloth: 0xe8e8e8, tassels: true }, cape: 0xf2f2f2, bio: '常山趙子龍，一身是膽。白馬銀槍，長坂坡七進七出。' },
+  machao: { head: 'lion', helmColor: 0xdcdcdc, beard: null, armored: true, armor: 0xd0d4dc, cloth: 0xf0f0f0, weapon: 'spear', arms: 'spear', horse: { color: 0xf2f0ea, cloth: 0xc8c8c8 }, cape: 0xf6f6f6, bio: '錦馬超，西涼豪傑，獅盔白袍，羌胡敬服。' },
+  zhangfei: { head: 'helmet', helmColor: 0x2a2a2a, beard: 'bushy', armored: true, armor: 0x2a2620, cloth: 0x1a1a1a, skin: 0xc89a72, weapon: 'snake', arms: 'spear', fierce: true, horse: { color: 0x141210, barding: 0x2a2a2a }, cape: 0x3a1a10, bio: '豹頭環眼，燕頷虎鬚，聲若巨雷。丈八蛇矛，喝斷長坂橋。' },
+  weiyan: { head: 'helmet', beard: 'full', armored: true, armor: 0x6a4a2a, cloth: 0x5a2a1a, face: 0xb86a48, weapon: 'dao', fierce: true, plume: 0x1a1a1a, horse: { color: 0x6a2a1a }, cape: 0x2a1a1a, bio: '勇猛過人，鎮守漢中十餘年。曾獻子午谷奇謀。' },
+  huangquan: { head: 'jinxian', beard: 'long', cloth: 0x2a4a3a, robe: true, weapon: 'sword', horse: { color: 0x6b4428 } },
+  masu: { head: 'guanjin', hatColor: 0x2a3a2a, beard: 'short', cloth: 0x3a5a4a, robe: true, weapon: 'sword', horse: { color: 0x8a6440 }, bio: '才器過人，好論軍計。「攻心為上」，卻失街亭。' },
+  wangping: { head: 'helmet', beard: 'short', armored: true, armor: SHU_A, cloth: SHU_C, plume: 0x2a6a3a, weapon: 'spear', horse: { color: 0x5a3a22 } },
+  jiangwei: { head: 'helmet', beard: null, armored: true, armor: 0x7a8a5a, cloth: 0x2a5a3a, plume: 0xc02020, weapon: 'spear', arms: 'spear', horse: { color: 0x3a2a1e, tassels: true }, cape: 0x2a5a3a, bio: '天水麒麟兒，諸葛亮傳人，「凡人中之傑也」。' },
+  wuban: { head: 'helmet', beard: 'short', armored: true, armor: SHU_A, cloth: SHU_C, weapon: 'dao', horse: { color: 0x6b4428 } },
+  guanxing: { head: 'headband', bandColor: 0x2a6a3a, beard: null, armored: true, armor: 0x3a6a4a, cloth: 0x2a5a32, face: 0xc06a48, weapon: 'guandao', horse: { color: 0x9a3a1a }, cape: 0x2a6a3a, bio: '關羽次子，繼承青龍偃月刀。' },
+  zhangbao: { head: 'headband', bandColor: 0x1a1a1a, beard: 'short', armored: true, armor: 0x3a3a30, cloth: 0x1a2a1a, weapon: 'snake', arms: 'spear', fierce: true, horse: { color: 0x1a1612 } },
+  maliang: { head: 'jinxian', beard: 'short', hair: 0x161210, cloth: 0x3a5a3a, robe: true, weapon: 'sword', horse: { color: 0xe8e0d0 }, bio: '「馬氏五常，白眉最良」，眉中有白毛。' },
+  // 吳
+  sunquan: { head: 'crown', beard: 'full', beardColor: 0x5a2a4a, hair: 0x3a1a2a, armored: true, armor: 0xa0302a, cloth: 0x7a1a16, trim: 0xe0b040, weapon: 'sword', horse: { color: 0x7a4a2a, cloth: 0x8a1a1a, tassels: true }, cape: 0xb02a20, bio: '碧眼紫髯，坐斷東南。「生子當如孫仲謀」。' },
+  luxun: { head: 'guanjin', hatColor: 0x2a1a1a, beard: null, cloth: 0xf0ebe0, trim: 0xa02a20, robe: true, armored: false, weapon: 'sword', horse: { color: 0xf0ece4, cloth: 0xa02a20 }, cape: 0xa02a20, bio: '書生拜將，夷陵火燒連營七百里，石亭大破曹休。' },
+  zhoutai: { head: 'helmet', beard: 'full', armored: true, armor: 0x5a2a22, cloth: WU_C, plume: 0x1a1a1a, skin: 0xc8946c, weapon: 'dao', fierce: true, horse: { color: 0x3a2418 }, cape: 0x6a1a14, bio: '數度捨身護孫權，身被十二創，皮膚如刻畫。' },
+  zhuhuan: { head: 'helmet', beard: 'short', armored: true, armor: WU_A, cloth: WU_C, plume: 0xe0b040, weapon: 'spear', horse: { color: 0x6b4428 }, bio: '濡須之戰以五千破曹仁數萬，「客倍而主人半」。' },
+  zhuran: { head: 'helmet', beard: 'short', armored: true, armor: WU_A, cloth: WU_C, weapon: 'spear', horse: { color: 0x8a6440 } },
+  handang: { head: 'helmet', beard: 'long', beardColor: 0x6a6a6a, armored: true, armor: 0x5a3a2a, cloth: WU_C, weapon: 'dao', horse: { color: 0x5a3a22 }, bio: '江東三代老將，善弓馬。' },
+  xusheng: { head: 'helmet', beard: 'short', armored: true, armor: WU_A, cloth: WU_C, plume: 0xc02020, weapon: 'ji', horse: { color: 0x3a2a1e }, bio: '築疑城於長江，曹丕望之嘆曰：「吳有人焉」。' },
+  dingfeng: { head: 'headband', bandColor: 0xc02020, beard: 'short', armored: true, armor: WU_A, cloth: WU_C, weapon: 'sword', horse: { color: 0x6b4428 } },
+  panzhang: { head: 'helmet', beard: 'full', armored: true, armor: WU_A, cloth: WU_C, weapon: 'dao', horse: { color: 0x4a3020 } },
+  zhugejin: { head: 'jinxian', beard: 'long', cloth: 0x6a2a2a, robe: true, weapon: 'sword', horse: { color: 0xe8e0d0 }, bio: '諸葛亮之兄，寬厚溫雅，屢為吳蜀通好。' },
+  zhoufang: { head: 'guanjin', hatColor: 0x2a1a1a, beard: 'short', cloth: 0x5a2a2a, robe: true, weapon: 'sword', horse: { color: 0x7a5a3a }, bio: '斷髮詐降，誘曹休入石亭之伏。' },
+  lvfan: { head: 'jinxian', beard: 'short', cloth: WU_C, robe: true, weapon: 'sword', horse: { color: 0x6b4428 } },
+  quancong: { head: 'helmet', beard: 'short', armored: true, armor: WU_A, cloth: WU_C, plume: 0xe0b040, weapon: 'spear', horse: { color: 0x8a6440 } },
+  sunhuan: { head: 'helmet', beard: null, armored: true, armor: WU_A, cloth: WU_C, plume: 0xc02020, weapon: 'spear', horse: { color: 0x5a3a22 } },
+  // 南蠻
+  menghuo: { head: 'tribal', beard: 'full', armored: false, cloth: 0x8a5a2a, skin: 0xb07848, belt: 0x6a3a1a, pants: 0x5a3a1a, weapon: 'axe', fierce: true, horse: { color: 0x9a3a1a, mane: 0x3a1a0a }, cape: 0xc8a050, bio: '南中豪帥，七擒七縱，終心悅誠服：「南人不復反矣」。' },
+  zhurong: { head: 'tribal', female: true, armored: false, cloth: 0xb02a2a, skin: 0xc08a5a, pants: 0x6a2a1a, weapon: 'knife', horse: { color: 0xe0d0b0 }, cape: 0xe0b040, bio: '孟獲之妻，相傳為祝融氏之後，善使飛刀。' },
+  mengyou: { head: 'tribal', beard: 'short', cloth: 0x7a4a2a, skin: 0xb07848, weapon: 'dao', horse: { color: 0x6b4428 } },
+  yonggai: { head: 'bun', beard: 'short', cloth: 0x6a4a2a, robe: true, weapon: 'sword', horse: { color: 0x7a5a3a } },
+};
+
+// 劇情中的文臣、使者
+export const NPC = {
+  '陳群': { f: 'wei', head: 'jinxian', beard: 'long', cloth: 0x2a3050, robe: true },
+  '劉曄': { f: 'wei', head: 'jinxian', beard: 'short', cloth: 0x3a3a5a, robe: true },
+  '蔣濟': { f: 'wei', head: 'jinxian', beard: 'thin', cloth: 0x2a3a4a, robe: true },
+  '侍中': { f: 'wei', head: 'jinxian', beard: 'long', beardColor: 0x8a8a8a, cloth: 0x3a2a2a, robe: true },
+  '靳詳': { f: 'shu', head: 'guanjin', beard: 'short', cloth: 0x3a4a3a, robe: true },
+  '闞澤': { f: 'wu', head: 'jinxian', beard: 'long', cloth: 0x5a2a2a, robe: true },
+  '張昭': { f: 'wu', head: 'jinxian', beard: 'long', beardColor: 0xb0b0b0, hair: 0x9a9a9a, cloth: 0x4a1a1a, robe: true },
+  '眾將': { f: 'wei', head: 'helmet', beard: 'full', armored: true, armor: WEI_A, cloth: WEI_C, plume: 0xc02020 },
+  '諸將': { f: 'wu', head: 'helmet', beard: 'full', armored: true, armor: WU_A, cloth: WU_C, plume: 0xc02020 },
+};
+
+function hash(str) { let h = 2166136261; for (const ch of str) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+// 沒有專屬造型的武將，依勢力與能力自動生成
+export function heroSpec(id) {
+  if (HERO[id]) return HERO[id];
+  if (NPC[id]) return NPC[id];
+  const g = GENERALS[id];
+  const f = g?.f || 'wei';
+  const h = hash(id);
+  const pal = { wei: [WEI_A, WEI_C], shu: [SHU_A, SHU_C], wu: [WU_A, WU_C], nanman: [0x6a4a2a, 0x7a4a2a] }[f];
+  const scholar = g && g.int > g.war + 12;
+  return {
+    head: scholar ? (h & 1 ? 'jinxian' : 'guanjin') : (f === 'nanman' ? 'tribal' : 'helmet'),
+    beard: ['short', 'full', 'long', null][h % 4], armored: !scholar, armor: pal[0], cloth: pal[1], robe: scholar,
+    plume: [0xc02020, 0x1a1a1a, 0xe0b040][(h >> 3) % 3], weapon: scholar ? 'sword' : ['spear', 'dao', 'ji', 'sword'][(h >> 5) % 4],
+    horse: { color: [0x6b4428, 0x3a2a1e, 0x8a6440, 0x1a1612, 0xe8e0d0][(h >> 7) % 5] },
+  };
+}
+
+// —— 材質 ——
+const MATS = {};
+function mat(key) {
+  if (MATS[key]) return MATS[key];
+  const o = { vertexColors: true, roughness: 0.75, metalness: 0.0 };
+  if (key === 'metal') Object.assign(o, { roughness: 0.38, metalness: 0.65 });
+  if (key === 'steel') Object.assign(o, { roughness: 0.22, metalness: 0.9 });
+  if (key === 'gold') Object.assign(o, { roughness: 0.3, metalness: 0.75 });
+  if (key === 'skin') Object.assign(o, { roughness: 0.6 });
+  if (key === 'hair' || key === 'mane') Object.assign(o, { roughness: 0.9 });
+  if (key === 'horse') Object.assign(o, { roughness: 0.55 });
+  if (key === 'cloth' || key === 'cape') Object.assign(o, { roughness: 0.85, side: THREE.DoubleSide });
+  if (key === 'leather') Object.assign(o, { roughness: 0.6 });
+  return (MATS[key] = new THREE.MeshStandardMaterial(o));
+}
+
+function groupFrom(B) {
+  const grp = new THREE.Group();
+  for (const [k, geo] of Object.entries(B.merged())) {
+    const m = new THREE.Mesh(geo, mat(k));
+    m.castShadow = true; m.receiveShadow = true;
+    grp.add(m);
+  }
+  return grp;
+}
+
+// —— 建立武將模型 ——
+// opts: { mounted, pose }
+export function makeHero(id, factionColor, opts = {}) {
+  const spec = { ...heroSpec(id || '') };
+  if (opts.portrait) { spec.arms = 'down'; spec.weapon = null; }
+  if (!id) Object.assign(spec, { head: 'helmet', beard: 'short', armored: true, armor: 0x6a6f78, cloth: factionColor, plume: 0xc02020, weapon: 'spear', horse: { color: 0x6b4428 } });
+  const mounted = opts.mounted ?? true;
+  const mount = mounted ? (spec.mount || 'horse') : null;
+  const pose = opts.pose || (mount === 'cart' ? 'sit' : mount ? 'ride' : 'stand');
+  if (spec.cape === undefined) spec.cape = new THREE.Color(factionColor).multiplyScalar(0.7).getHex();
+  const root = new THREE.Group();
+  const body = new THREE.Group(); root.add(body);
+  // 坐騎
+  if (mount === 'horse') { const HB = new THREE.Group(); const B = new Builder(1); buildHorse(B, { cloth: spec.cape ?? factionColor, ...spec.horse }); HB.add(groupFrom(B)); body.add(HB); }
+  if (mount === 'cart') { const B = new Builder(1); buildCart(B); body.add(groupFrom(B)); }
+  // 人
+  const B = new Builder(1);
+  const off = pose === 'ride' ? 0.62 : pose === 'sit' ? -0.13 : 0;
+  B.base = M([0, off, pose === 'sit' ? 0.05 : 0]);
+  const hands = buildHuman(B, spec, pose);
+  for (const m of weaponPlacement(spec.weapon, hands, pose)) {
+    const W = new Builder(1); W.base = B.base.clone().multiply(m);
+    buildWeapon(W, spec.weapon, spec);
+    for (const k in W.b) (B.b[k] ||= []).push(...W.b[k]);
+  }
+  if (spec.weapon === 'bow' || spec.quiver) B.cyl('leather', 0x4a2e18, 0.06, 0.06, 0.5, 8, M([0.12, 1.35 + off, 0.2], [0.3, 0, 0.2]));
+  if (spec.armored && pose !== 'stand' && spec.weapon !== 'sword') {
+    // 佩劍
+    const W = new Builder(1); W.base = M([-0.24, 0.98 + off, 0.05], [1.9, 0, 0.2]); buildWeapon(W, 'sword');
+    for (const k in W.b) (B.b[k] ||= []).push(...W.b[k]);
+  }
+  const rider = groupFrom(B);
+  body.add(rider);
+  root.userData.body = body;
+  root.userData.rider = rider;
+  root.userData.spec = spec;
+  return root;
+}
+
+// —— 頭像（離屏渲染） ——
+let pr = null;
+const PORTRAITS = {};
+function portraitRenderer() {
+  if (pr) return pr;
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  renderer.setSize(256, 256); renderer.setPixelRatio(1);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.3;
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xfff2e0, 0x5a4a3a, 2.0));
+  const key = new THREE.DirectionalLight(0xffeedd, 3.0); key.position.set(-1.5, 2.5, -2.5); scene.add(key);
+  const rim = new THREE.DirectionalLight(0xffd090, 1.8); rim.position.set(2, 1.5, 2); scene.add(rim);
+  const cam = new THREE.PerspectiveCamera(24, 1, 0.1, 20);
+  pr = { renderer, scene, cam };
+  return pr;
+}
+export function renderPortrait(id) {
+  if (PORTRAITS[id]) return PORTRAITS[id];
+  try {
+    const { renderer, scene, cam } = portraitRenderer();
+    const f = GENERALS[id]?.f || NPC[id]?.f || 'wei';
+    const hero = makeHero(id, FACTIONS[f].color, { mounted: false, pose: 'stand', portrait: true });
+    hero.rotation.y = 0.35;
+    scene.add(hero);
+    const spec = hero.userData.spec;
+    const tall = ['tribal', 'crown', 'jinxian', 'lion'].includes(spec.head) || spec.plume != null;
+    cam.position.set(-0.32, 1.72, -1.35); cam.lookAt(0, tall ? 1.74 : 1.69, 0);
+    cam.fov = tall ? 27 : 23; cam.updateProjectionMatrix();
+    renderer.render(scene, cam);
+    const url = renderer.domElement.toDataURL('image/png');
+    scene.remove(hero);
+    hero.traverse(o => o.geometry && o.geometry.dispose());
+    return (PORTRAITS[id] = url);
+  } catch (e) { console.warn('portrait', id, e); return null; }
+}
+export function getPortrait(id) { return PORTRAITS[id] || null; }
+export async function renderAllPortraits(onProgress) {
+  const ids = [...Object.keys(GENERALS), ...Object.keys(NPC)];
+  for (let i = 0; i < ids.length; i++) {
+    renderPortrait(ids[i]);
+    if (i % 6 === 5) { onProgress && onProgress(i / ids.length); await new Promise(r => setTimeout(r, 0)); }
+  }
+}
+
+// —— 模型檢視器（軍營） ——
+export function openViewer(container, id, factionColor) {
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.35;
+  const fit = () => { const r = container.getBoundingClientRect(); const w = Math.max(50, r.width), h = Math.max(50, r.height); renderer.setSize(w, h); cam.aspect = w / h; cam.updateProjectionMatrix(); };
+  const ro = new ResizeObserver(fit);
+  renderer.shadowMap.enabled = true;
+  container.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xfff2e0, 0x5a4a3a, 2.0));
+  const camLight = new THREE.DirectionalLight(0xfff4e8, 2.2); scene.add(camLight);
+  const sun = new THREE.DirectionalLight(0xffeedd, 2.2); sun.position.set(-3, 5, -3); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024);
+  Object.assign(sun.shadow.camera, { left: -2, right: 2, top: 3, bottom: -1 });
+  scene.add(sun);
+  const rim = new THREE.DirectionalLight(0xffc080, 1.2); rim.position.set(3, 2, 3); scene.add(rim);
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(1.8, 40), new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+  let hero = makeHero(id, factionColor, { mounted: true });
+  scene.add(hero);
+  const cam = new THREE.PerspectiveCamera(32, 1, 0.1, 50);
+  fit(); ro.observe(container);
+  let ang = 2.6, drag = null, mounted = true, alive = true;
+  const el = renderer.domElement;
+  el.style.cursor = 'grab';
+  el.onpointerdown = (e) => { drag = e.clientX; el.setPointerCapture(e.pointerId); };
+  el.onpointermove = (e) => { if (drag != null) { ang -= (e.clientX - drag) * 0.01; drag = e.clientX; } };
+  el.onpointerup = () => { drag = null; };
+  function loop() {
+    if (!alive) return;
+    if (drag == null) ang += 0.006;
+    const r = mounted ? 6.2 : 3.9, ty = mounted ? 1.25 : 1.0;
+    cam.position.set(Math.sin(ang) * r, ty + 0.6, Math.cos(ang) * r); cam.lookAt(0, ty, 0);
+    camLight.position.copy(cam.position).add(V(1, 2, 0));
+    renderer.render(scene, cam);
+    requestAnimationFrame(loop);
+  }
+  loop();
+  return {
+    toggleMount() { mounted = !mounted; scene.remove(hero); hero = makeHero(id, factionColor, { mounted }); scene.add(hero); return mounted; },
+    dispose() { alive = false; ro.disconnect(); renderer.dispose(); el.remove(); scene.traverse(o => o.geometry && o.geometry.dispose()); },
+  };
+}
+
+// —— 批次士兵用的幾何（低細節，tint 部分著勢力色） ——
+export function soldierGeometry2(type, variant = 0) {
+  const B = new Builder(0);
+  const spec = {
+    tint: true, armored: true, armor: 0x5c6068, cloth: 0xffffff, head: type === 'archer' ? 'headband' : 'helmet', bandColor: 0x3a2a1a,
+    plume: type === 'cav' || type === 'spear' ? 1 : null, beard: null, arms: type === 'spear' ? 'spear' : type === 'archer' ? 'bow' : 'weapon',
+  };
+  const pose = type === 'cav' ? 'ride' : 'stand';
+  if (type === 'cav') buildHorse(B, { tint: true, color: [0x6b4428, 0x3a2a1e, 0x8a6440][variant % 3] });
+  const off = pose === 'ride' ? 0.62 : 0;
+  B.base = M([0, off, 0]);
+  const hands = buildHuman(B, spec, pose);
+  const wtype = type === 'cav' ? 'spear' : type === 'spear' ? 'spear' : type === 'archer' ? 'bow' : 'sword';
+  for (const m of weaponPlacement(wtype, hands, type === 'cav' ? 'ride' : (type === 'spear' ? 'ride' : 'stand'))) {
+    B.base = M([0, off, 0]).multiply(m);
+    buildWeapon(B, wtype, { tassel: 0xc02020 });
+  }
+  B.base = M([0, off, 0]);
+  if (type === 'inf') {
+    // 圓盾
+    B.cyl('tint', 0xdddddd, 0.26, 0.26, 0.04, 12, M([-0.36, 1.1, -0.22], [Math.PI / 2, 0, 0.25]));
+    B.cyl('metal', 0xb8a060, 0.06, 0.06, 0.06, 8, M([-0.37, 1.1, -0.25], [Math.PI / 2, 0, 0.25]));
+  }
+  if (type === 'archer') B.cyl('leather', 0x4a2e18, 0.06, 0.06, 0.5, 6, M([0.12, 1.32, 0.2], [0.3, 0, 0.2]));
+  const g = B.merged();
+  const tint = g.tint;
+  delete g.tint;
+  return { tint, base: mergeGeometries(Object.values(g)) };
+}
