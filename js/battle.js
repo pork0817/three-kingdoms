@@ -1056,9 +1056,6 @@ export class Battle {
           // 每秒破門量：衝車 40、撞木 18、徒手 4，隨兵力略增
           const em = ramming ? (sq.engine === 'cart' ? 40 : 18) : 4;
           this.gate.hp -= em * (0.4 + sq.troops / 6000) * st.atk * dt;
-          if (sq.engineMesh?.userData.log && Math.sin(this.time * 4 + sq.id) > 0.97 && Math.random() < 0.5) SFX.drum(0.35);
-          if (Math.random() < dt * 3) SFX.clash(0.12);
-          if (Math.random() < dt * 4) this.particlesN.emit(gp.x + rand(-5, 5), rand(1, 4), gp.y, rand(-1, 1), rand(1, 2), rand(-1, 1), 1.5, 4, 0.6, 0.55, 0.45, 0.6, 0, 2);
         } else sq.state = 'move';
         this.fightInRange(sq, st, dt, true);
         return;
@@ -1661,8 +1658,17 @@ export class Battle {
           m.position.lerp(new THREE.Vector3(x, this.ground(x, z), z), Math.min(1, rdt * 3));
           m.rotation.y = sq.yaw;
           const log = m.userData.log;
-          if (log) log.position.z = sq.state === 'gate' ? Math.sin(this.time * 4 + sq.id) * 0.9 : 0;
-          if (sq.state === 'gate' && Math.sin(this.time * 4 + sq.id) > 0.95 && Math.random() < 0.3) for (let i = 0; i < 6; i++) this.particlesN.emit(gp.x + rand(-4, 4), rand(1, 5), gp.y, rand(-2, 2), rand(1, 3), rand(-1, 1), 1.5, 3.5, 0.55, 0.5, 0.42, 0.6, 0, 2);
+          // 撞木每擺一次只撞擊一下：前擺到底時才發出一聲悶響與揚塵
+          if (sq.state === 'gate') {
+            sq._ramPh = (sq._ramPh || 0) + rdt * (this.paused ? 0 : this.speed) * 2.6;
+            if (log) log.position.z = -Math.sin(sq._ramPh) * 0.9;
+            const cyc = Math.floor((sq._ramPh - Math.PI / 2) / (Math.PI * 2));
+            if (cyc !== sq._ramCyc) {
+              sq._ramCyc = cyc;
+              SFX.thud(0.5);
+              for (let i = 0; i < 8; i++) this.particlesN.emit(gp.x + rand(-4, 4), rand(1, 5), gp.y, rand(-2, 2), rand(1, 3), rand(-1, 1), 1.5, 3.5, 0.55, 0.5, 0.42, 0.6, 0, 2);
+            }
+          } else if (log) log.position.z = 0;
         }
       } else if (sq.engineMesh) this.removeEngine(sq);
       // 雲梯

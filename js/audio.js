@@ -1,9 +1,18 @@
 // 簡易合成音效（WebAudio，無外部檔案）
 import { SETTINGS } from './settings.js';
-let ctx = null, master = null, musicBus = null, muted = false;
+let ctx = null, master = null, musicBus = null, limiter = null, muted = false;
+// 同一種音效的最短間隔（秒），避免大量重疊造成爆音
+const GAP = { drum: 0.09, clash: 0.06, whoosh: 0.12, fire: 0.6, horn: 1.5, thud: 0.15 };
+const lastT = {};
+function allow(kind, when = 0) {
+  const c = ctx; if (!c) return true;
+  const t = c.currentTime + when;
+  if (lastT[kind] != null && Math.abs(t - lastT[kind]) < GAP[kind]) return false;
+  lastT[kind] = t; return true;
+}
 function ac() {
   if (!ctx) {
-    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); master = ctx.createGain(); master.gain.value = SETTINGS.sfx; master.connect(ctx.destination); musicBus = ctx.createGain(); musicBus.gain.value = SETTINGS.music * 0.6; musicBus.connect(ctx.destination); } catch (e) { return null; }
+    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); master = ctx.createGain(); master.gain.value = SETTINGS.sfx; limiter = ctx.createDynamicsCompressor(); Object.assign(limiter, {}); limiter.threshold.value = -14; limiter.knee.value = 6; limiter.ratio.value = 12; limiter.attack.value = 0.003; limiter.release.value = 0.2; master.connect(limiter); limiter.connect(ctx.destination); musicBus = ctx.createGain(); musicBus.gain.value = SETTINGS.music * 0.6; musicBus.connect(limiter); } catch (e) { return null; }
   }
   if (ctx.state === 'suspended') ctx.resume();
   return ctx;
@@ -18,16 +27,16 @@ function noiseBuf(dur) {
   return b;
 }
 export function drum(vol = 1, when = 0) {
-  const c = ac(); if (!c || muted) return;
+  const c = ac(); if (!c || muted || !allow('drum', when)) return;
   const t = c.currentTime + when;
   const o = c.createOscillator(), g = c.createGain();
   o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.35);
-  g.gain.setValueAtTime(0.9 * vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+  g.gain.setValueAtTime(0.55 * vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
   o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.55);
 }
 export function drumRoll(n = 6, gap = 0.28) { for (let i = 0; i < n; i++) drum(i % 2 ? 0.6 : 1, i * gap); }
 export function clash(vol = 0.25) {
-  const c = ac(); if (!c || muted) return;
+  const c = ac(); if (!c || muted || !allow('clash')) return;
   const t = c.currentTime;
   const s = c.createBufferSource(); s.buffer = noiseBuf(0.15);
   const f = c.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 2500 + Math.random() * 2500; f.Q.value = 6;
@@ -35,7 +44,7 @@ export function clash(vol = 0.25) {
   s.connect(f); f.connect(g); g.connect(master); s.start(t);
 }
 export function whoosh(vol = 0.15) {
-  const c = ac(); if (!c || muted) return;
+  const c = ac(); if (!c || muted || !allow('whoosh')) return;
   const t = c.currentTime;
   const s = c.createBufferSource(); s.buffer = noiseBuf(0.6);
   const f = c.createBiquadFilter(); f.type = 'bandpass'; f.frequency.setValueAtTime(600, t); f.frequency.linearRampToValueAtTime(2400, t + 0.5); f.Q.value = 2;
@@ -43,7 +52,7 @@ export function whoosh(vol = 0.15) {
   s.connect(f); f.connect(g); g.connect(master); s.start(t);
 }
 export function fireSound(vol = 0.3) {
-  const c = ac(); if (!c || muted) return;
+  const c = ac(); if (!c || muted || !allow('fire')) return;
   const t = c.currentTime;
   const s = c.createBufferSource(); s.buffer = noiseBuf(1.5);
   const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 700;
@@ -51,7 +60,7 @@ export function fireSound(vol = 0.3) {
   s.connect(f); f.connect(g); g.connect(master); s.start(t);
 }
 export function horn() {
-  const c = ac(); if (!c || muted) return;
+  const c = ac(); if (!c || muted || !allow('horn')) return;
   const t = c.currentTime;
   for (const fr of [146.8, 220]) {
     const o = c.createOscillator(), g = c.createGain(), f = c.createBiquadFilter();
@@ -61,6 +70,20 @@ export function horn() {
   }
 }
 export function unlock() { ac(); }
+// 撞木撞門：低沉悶響（不用鼓聲，避免刺耳）
+export function thud(vol = 0.5) {
+  const c = ac(); if (!c || muted || !allow('thud')) return;
+  const t = c.currentTime;
+  const o = c.createOscillator(), g = c.createGain(), f = c.createBiquadFilter();
+  o.type = 'sine'; o.frequency.setValueAtTime(70, t); o.frequency.exponentialRampToValueAtTime(38, t + 0.25);
+  f.type = 'lowpass'; f.frequency.value = 300;
+  g.gain.setValueAtTime(vol * 0.6, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+  o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t + 0.4);
+  const s = c.createBufferSource(); s.buffer = noiseBuf(0.12);
+  const f2 = c.createBiquadFilter(); f2.type = 'lowpass'; f2.frequency.value = 900;
+  const g2 = c.createGain(); g2.gain.setValueAtTime(vol * 0.25, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  s.connect(f2); f2.connect(g2); g2.connect(master); s.start(t);
+}
 
 // —— 背景音樂：五聲音階程序生成 ——
 const PENTA = [0, 2, 4, 7, 9];
