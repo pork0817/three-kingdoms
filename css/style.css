@@ -515,3 +515,4 @@ body.phone .pcard .btn.small { padding: 3px 6px; font-size: 11px; }
 body.phone .tt-wrap { width: 200px; height: 200px; }
 body.phone .tt-wheel span i { top: 8px; font-size: 13px; }
 body.phone.landscape .tt-wrap { width: 150px; height: 150px; }
+.tank-lbl { display: flex; align-items: center; padding: 0 8px; color: #b8d49a; font-size: 13px; border: 1px solid rgba(184,212,154,.4); border-radius: 4px; }

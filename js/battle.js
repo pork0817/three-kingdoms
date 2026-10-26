@@ -376,6 +376,8 @@ export class Battle {
     this.wall = wall;
     const gh = (c.gateHP || 4000) * (this.defSide === 'p' ? 1.8 * (1 + 0.35 * ((c.wallLevel || 1) - 1)) : 1);
     this.gate = { hp: gh, max: gh, broken: false, mesh: wall.userData.gate };
+    this.breaches = [];
+    this.blocks = wall.userData.blocks.map(b => ({ ...b, x: this.sgnAtt < 0 ? -b.lx : b.lx, hp: 4000, max: 4000, open: false }));
     // 城內建築
     const roofM = new THREE.MeshStandardMaterial({ color: 0x3a3a44, roughness: 0.6 });
     const wallM = new THREE.MeshStandardMaterial({ color: 0xd8ccb0, roughness: 0.9 });
@@ -441,7 +443,7 @@ export class Battle {
   makeSquad(side, o) {
     const sq = {
       id: UID++, side, type: o.type, general: o.general || null, troops: o.troops, max: o.troops, morale: o.morale ?? 100,
-      pos: new V2(0, 0), yaw: side === 'p' ? 0 : Math.PI, wave: o.wave || 1, released: false,
+      pos: new V2(0, 0), yaw: side === 'p' ? 0 : Math.PI, wave: o.wave || 1, aim: o.aim || null, released: false,
       hidden: !!o.ambush, ambush: !!o.ambush, wallSquad: !!o.wall, onWall: !!o.wall, climbT: 0,
       state: 'wait', order: 'auto', target: null, moveTo: null, dead: false, routed: false, escaped: false,
       engaged: false, attackers: 0, loss: 0, killed: 0, soldiers: [], fireCd: rand(0, 1), leader: !!o.leader,
@@ -462,7 +464,7 @@ export class Battle {
     if (sq.type === 'cav' && W('horse')) { spd *= 1.2; atk *= 1.1; }
     const MO = (m) => this.M(sq.side, m);
     if (MO('vest')) def *= 1.5;
-    if (sq.type === 'cav' && MO('jeep')) spd *= 1.5;
+    if (sq.type === 'cav' && MO('jeep')) { spd *= 1.5; range = 50; }
     if (sq.type === 'archer' && MO('rifle')) { atk *= 2.2; range *= 1.3; }
     if (sq.type === 'archer' && MO('mg')) atk *= 1.8;
     if ((sq.type === 'inf' || sq.type === 'spear') && MO('rpg')) atk *= 1.4;
@@ -644,7 +646,7 @@ export class Battle {
   defaultPlayerRows() {
     const c = this.cfg, st = this.state;
     const avail0 = Math.min(st.troops, c.maxTroops || st.troops);
-    const tankT = st.tanks > 0 && !this.naval ? Math.floor(Math.min(st.tanks * 500, avail0 * 0.4) / 500) * 500 : 0;
+    const tankT = st.tanks > 0 && !this.naval ? Math.floor(Math.min(st.tanks * 500, avail0 * 0.5) / 500) * 500 : 0;
     const avail = avail0 - tankT;
     const gens = st.generals.filter(g => GENERALS[g] && !(this.injured || []).includes(g)).sort((a, b) => (GENERALS[b].war + GENERALS[b].lead) - (GENERALS[a].war + GENERALS[a].lead));
     let leader = c.playerLeader && st.generals.includes(c.playerLeader) ? c.playerLeader : gens[0];
@@ -658,7 +660,7 @@ export class Battle {
     // 鐵律：主將所在部隊為步兵
     rows[0].type = this.siege && this.defSide === 'p' ? 'inf' : rows[0].type;
     // 穿越模式：自動編入坦克隊
-    if (tankT > 0) rows.push({ type: 'tank', general: '', troops: tankT, wave: 1, ambush: false });
+    if (tankT > 0) rows.push({ type: 'tank', general: '', aim: 'wall', troops: tankT, wave: 1, ambush: false });
     return rows;
   }
 
@@ -670,7 +672,7 @@ export class Battle {
       if (this.naval && (r.type === 'cav' || r.type === 'tank')) r.type = 'inf';
       if (r.type === 'tank') r.troops = Math.min(r.troops, (this.state.tanks || 0) * 500);
       if (r.troops <= 0) return;
-      const sq = this.makeSquad('p', { type: r.type, troops: r.troops, general: r.general || null, wave: r.wave, ambush: r.ambush, leader: i === 0, morale: this.cfg.playerMorale });
+      const sq = this.makeSquad('p', { type: r.type, troops: r.troops, general: r.type === 'tank' ? null : (r.general || null), aim: r.aim, wave: r.wave, ambush: r.ambush, leader: i === 0, morale: this.cfg.playerMorale });
       if (this.siege && this.defSide === 'p' && r.type === 'archer') { sq.wallSquad = true; sq.onWall = true; }
       this.squads.push(sq);
     });
@@ -943,12 +945,97 @@ export class Battle {
   }
 
   gatePos() { return new V2(0, this.zw + this.sgnAtt * 4.5); }
+  wallOpen() { return this.gate.broken || (this.breaches?.length > 0); }
+  nearestBlock(p) { return this.blocks.filter(b => !b.open && Math.abs(b.x) > 16).reduce((a, b) => !a || Math.hypot(b.x - p.x, this.zw - p.y) < Math.hypot(a.x - p.x, this.zw - p.y) ? b : a, null); }
+  // 可通行的城牆缺口（城門 + 炸開的缺口）
+  passages(sq) {
+    const ps = this.breaches.map(b => ({ x: b.x, hw: b.w / 2 - 0.5 }));
+    if (this.gate.broken || this.gateOpen || (sq.side === this.defSide && sq.sally)) ps.push({ x: 0, hw: 5 });
+    return ps;
+  }
+  damageBlock(b, n) {
+    if (!b || b.open) return;
+    b.hp -= n;
+    if (Math.random() < 0.5) for (let i = 0; i < 6; i++) this.particlesN.emit(b.x + rand(-b.w / 2, b.w / 2), rand(1, this.wallH), this.zw + this.sgnAtt * 3.5, rand(-2, 2), rand(1, 3), rand(-2, 2), rand(1.5, 3), rand(3, 6), 0.6, 0.56, 0.48, 0.6, -0.2, 2);
+    if (b.hp <= 0) this.openBreach(b);
+  }
+  openBreach(b) {
+    b.open = true; this.breaches.push(b);
+    for (const m of b.meshes) m.visible = false;
+    const stoneM = new THREE.MeshStandardMaterial({ color: 0x9c907a, roughness: 0.95 });
+    const rub = new THREE.Group();
+    for (let i = 0; i < 26; i++) {
+      const sz = rand(0.8, 2.6), u = rand(-0.5, 0.5);
+      const m = new THREE.Mesh(new THREE.BoxGeometry(sz, sz * rand(0.5, 1), sz), stoneM);
+      m.position.set(b.x + u * b.w, (1 - Math.abs(u) * 1.4) * rand(0.2, 1.6), this.zw + rand(-6, 6));
+      m.rotation.set(rand(0, 3), rand(0, 3), rand(0, 3)); m.castShadow = m.receiveShadow = true; rub.add(m);
+    }
+    this.scene.add(rub);
+    const y0 = this.ground(b.x, this.zw);
+    for (let i = 0; i < 120; i++) this.particlesAdd.emit(b.x + rand(-4, 4), y0 + rand(1, this.wallH), this.zw + rand(-3, 3), rand(-10, 10), rand(3, 16), rand(-10, 10), rand(0.4, 1.1), rand(3, 8), 1, rand(0.35, 0.7), 0.1, 1, 8, -2);
+    for (let i = 0; i < 70; i++) this.particlesN.emit(b.x + rand(-b.w / 2, b.w / 2), y0 + rand(1, this.wallH + 4), this.zw + rand(-5, 5), rand(-4, 4), rand(1, 6), rand(-4, 4), rand(3, 6), rand(7, 13), 0.62, 0.57, 0.48, 0.75, -0.25, 4);
+    SFX.boom(1); SFX.drumRoll(4, 0.15); this.camShake = 1;
+    for (const s of this.squads) {
+      if (s.side !== this.defSide || s.dead) continue;
+      s.morale -= 15;
+      if (s.wallSquad && Math.abs(s.pos.x - b.x) < b.w / 2 + 6) {
+        s.loss += s.troops * 0.3; s.morale -= 20;
+        const ok = this.blocks.filter(x => !x.open).sort((p, q) => Math.abs(p.x - s.pos.x) - Math.abs(q.x - s.pos.x))[0];
+        if (ok) { s.pos.x = ok.x; this.placeSoldiers?.(s); }
+      }
+    }
+    this.log(this.attSide, '轟隆——城牆被轟出一道缺口！大軍從缺口殺入！');
+  }
+  isGun(sq) { return sq.side === 'p' && ((sq.type === 'archer' && (this.M('p', 'rifle') || this.M('p', 'mg'))) || (sq.type === 'cav' && this.M('p', 'jeep'))); }
+  isRanged(sq) { return sq.type === 'archer' || sq.type === 'tank' || (sq.type === 'cav' && this.M(sq.side, 'jeep')); }
+  // 坦克：每輛各自裝填，持續開砲；砲彈命中即生效
+  tankGuns(sq, dt, aim) {
+    sq.tcd ||= [];
+    sq.engaged = true; sq.state = 'fight';
+    const alive = sq.soldiers.filter(s => s.alive);
+    const tp = aim.pt;
+    sq.yaw = lerpAngle(sq.yaw, Math.atan2(-(tp.x - sq.pos.x), -(tp.y - sq.pos.y)), Math.min(1, dt * 2));
+    // 同軸機槍
+    if (aim.tgt) { aim.tgt.loss += 5 * alive.length * dt; sq.killed += 5 * alive.length * dt; }
+    alive.forEach((a, i) => {
+      sq.tcd[i] = (sq.tcd[i] ?? rand(0, 1.2)) - dt;
+      if (sq.tcd[i] > 0) return;
+      sq.tcd[i] = 1.6 + rand(0, 0.3);
+      if (aim.block) this.damageBlock(aim.block, 170);
+      else if (aim.gate) this.gate.hp -= 170;
+      else if (aim.tgt) { const k = 30 * (aim.tgt.wallSquad ? 0.8 : 1); aim.tgt.loss += k; aim.tgt.morale -= 1.5; sq.killed += k; }
+      // 畫面
+      const mesh = sq.tankMeshes?.[sq.soldiers.indexOf(a)], yaw = a.yaw + (mesh ? mesh.userData.turret.rotation.y : 0);
+      const from = new THREE.Vector3(a.x - Math.sin(yaw) * 5.6, this.ground(a.x, a.z) + 2.15, a.z - Math.cos(yaw) * 5.6);
+      this.muzzle(from.x, from.y, from.z, 12);
+      if (mesh) { const g = mesh.userData.gun; tween(250, t => g.position.z = -3.0 - 0.4 * t); }
+      let to;
+      if (aim.block) to = new THREE.Vector3(aim.block.x + rand(-3, 3), this.ground(aim.block.x, this.zw) + rand(2, this.wallH), this.zw + this.sgnAtt * 3.6);
+      else if (aim.gate) { const gp = this.gatePos(); to = new THREE.Vector3(gp.x + rand(-3, 3), this.ground(gp.x, gp.y) + rand(2, 6), this.zw + this.sgnAtt * 4); }
+      else { const ta = aim.tgt.soldiers.filter(x => x.alive); const b = ta.length ? pick(ta) : { x: tp.x, z: tp.y }; to = new THREE.Vector3(b.x, (b.y ?? this.ground(b.x, b.z)), b.z); }
+      this.launchShell(from, to, 0.3, null, { arc: 0.01, small: true, big: 1.1 });
+    });
+  }
+  doTank(sq, st, dt, tgt) {
+    const struct = this.siege && sq.side === this.attSide && !this.wallOpen();
+    if (struct) {
+      const aim = sq.aim === 'gate' ? { gate: true, pt: this.gatePos() } : (() => { const b = this.nearestBlock(sq.pos); return { block: b, pt: new V2(b.x, this.zw + this.sgnAtt * 4.5) }; })();
+      const d = sq.pos.distanceTo(aim.pt);
+      if (d > st.range * 0.7) { this.moveToward(sq, aim.pt, st.spd, dt); sq.state = 'move'; }
+      else this.tankGuns(sq, dt, aim);
+      return;
+    }
+    if (!tgt) return;
+    const d = sq.pos.distanceTo(tgt.pos), reach = sq.radius + tgt.radius + st.range;
+    if (d > reach * 0.85) { this.moveToward(sq, tgt.pos, st.spd, dt); sq.state = 'move'; }
+    if (d <= reach) this.tankGuns(sq, dt, { tgt, pt: tgt.pos });
+  }
 
   chooseTarget(sq) {
     const foes = this.enemiesOf(sq.side).filter(s => this.visibleTarget(s, sq.side));
     if (!foes.length) return null;
     let best = null, bd = 1e9;
-    const isArch = sq.type === 'archer' || sq.type === 'tank';
+    const isArch = this.isRanged(sq);
     for (const f of foes) {
       let d = sq.pos.distanceTo(f.pos);
       if (f.routed) d += 40;
@@ -959,7 +1046,7 @@ export class Battle {
         // 攻方近戰無雲梯時不能打城上守軍
         if (f.wallSquad && !isArch && sq.side === this.attSide && !this.canClimb(sq)) d += 1e5;
         if (sq.wallSquad && !f.onWall && !this.inRangeOfWall(sq, f)) d += 500;
-        if (sq.side === this.defSide && !sq.wallSquad && !isArch && this.outside(f.pos.y) && !this.gate.broken && !sq.sally) d += 400;
+        if (sq.side === this.defSide && !sq.wallSquad && !isArch && this.outside(f.pos.y) && !this.wallOpen() && !sq.sally) d += 400;
       }
       if (d < bd) { bd = d; best = f; }
     }
@@ -974,11 +1061,12 @@ export class Battle {
     if (this.siege && !sq.onWall) {
       const sOut = this.outside(sq.pos.y), gOut = this.outside(g.y);
       if (sOut !== gOut) {
-        const canPass = this.gate.broken || this.gateOpen || (sq.side === this.defSide && sq.sally);
-        const front = new V2(0, this.zw + (sOut ? 1 : -1) * this.sgnAtt * 9);
-        if (canPass) {
-          const inCorr = Math.abs(sq.pos.x) < 5 && Math.abs(sq.pos.y - this.zw) < 10;
-          g = inCorr ? new V2(0, this.zw - (sOut ? 1 : -1) * this.sgnAtt * 12) : front;
+        const ps = this.passages(sq);
+        const p = ps.length ? ps.reduce((a, b) => Math.abs(b.x - sq.pos.x) + Math.abs(b.x - g.x) * 0.5 < Math.abs(a.x - sq.pos.x) + Math.abs(a.x - g.x) * 0.5 ? b : a) : null;
+        const front = new V2(p ? p.x : 0, this.zw + (sOut ? 1 : -1) * this.sgnAtt * 9);
+        if (p) {
+          const inCorr = Math.abs(sq.pos.x - p.x) < p.hw && Math.abs(sq.pos.y - this.zw) < 10;
+          g = inCorr ? new V2(p.x, this.zw - (sOut ? 1 : -1) * this.sgnAtt * 12) : front;
         } else g = front;
       }
     }
@@ -999,7 +1087,7 @@ export class Battle {
     }
     // 城牆阻擋
     if (this.siege && !sq.onWall) {
-      const inGate = Math.abs(sq.pos.x) < 5.5 && (sq.side === this.defSide || this.gate.broken);
+      const inGate = (Math.abs(sq.pos.x) < 5.5 && (sq.side === this.defSide || this.gate.broken)) || this.breaches.some(b => Math.abs(sq.pos.x - b.x) < b.w / 2);
       const rel = (sq.pos.y - this.zw) * this.sgnAtt;
       const prevOut = this.outside(sq.pos.y - d.y * step / len);
       if (!inGate && Math.abs(rel) < 4.5) sq.pos.y = this.zw + this.sgnAtt * (prevOut ? 4.5 : -4.5);
@@ -1050,9 +1138,16 @@ export class Battle {
       if (sq.order === 'attack' && sq.target && !sq.target.dead) tgt = sq.target;
     }
     sq.target = tgt;
+    if (sq.type === 'tank') return this.doTank(sq, st, dt, tgt);
     // 攻城：無目標或目標為城牆守軍
-    if (this.siege && sq.side === this.attSide && sq.type !== 'archer' && !this.gate.broken && !sq.onWall) {
+    if (this.siege && sq.side === this.attSide && sq.type !== 'archer' && !this.isRanged(sq) && !this.wallOpen() && !sq.onWall) {
       const wallT = tgt && tgt.wallSquad;
+      if (sq.aim === 'wall' && this.M(sq.side, 'rpg')) {
+        const b = this.nearestBlock(sq.pos), spot = new V2(b.x, this.zw + this.sgnAtt * 30);
+        const l = this.moveToward(sq, spot, st.spd, dt); sq.state = l < 3 ? 'hold' : 'move';
+        this.fightInRange(sq, st, dt, true);
+        return;
+      }
       if (!tgt || wallT || !this.outside(tgt.pos.y)) {
         if (wallT && this.canClimb(sq)) {
           const base = new V2(clamp(tgt.pos.x + ((sq.id % 3) - 1) * 14, -140, 140), this.zw + this.sgnAtt * 7);
@@ -1092,9 +1187,9 @@ export class Battle {
     }
     const d = sq.pos.distanceTo(tgt.pos);
     const reach = sq.radius + tgt.radius + st.range;
-    if (sq.type === 'archer' || sq.type === 'tank') {
+    if (this.isRanged(sq)) {
       const close = this.enemiesOf(sq.side).find(e => this.visibleTarget(e) && e.type !== 'archer' && !e.wallSquad && e.pos.distanceTo(sq.pos) < sq.radius + e.radius + 3);
-      if (close) { this.melee(sq, close, st, dt, 0.45); return; }
+      if (close) { if (this.isGun(sq)) this.shoot(sq, close, st, dt); else this.melee(sq, close, st, dt, 0.45); return; }
       if (d > reach * 0.92) { this.moveToward(sq, tgt.pos, st.spd, dt); sq.state = 'move'; }
       if (d <= reach) this.shoot(sq, tgt, st, dt);
       return;
@@ -1121,7 +1216,9 @@ export class Battle {
       if (d < bd) { bd = d; best = f; }
     }
     if (!best) return;
-    if (sq.type === 'archer' || sq.wallSquad && sq.type === 'archer') {
+    if (sq.type === 'tank') {
+      if (bd < st.range) this.tankGuns(sq, dt, { tgt: best, pt: best.pos });
+    } else if (this.isRanged(sq)) {
       if (bd < st.range) this.shoot(sq, best, st, dt);
     } else if (!rangedOnly && bd < st.range) {
       if (this.siege && best.wallSquad && !sq.onWall) return;
@@ -1131,7 +1228,7 @@ export class Battle {
   }
 
   crossWall(a, b) {
-    if (!this.siege || this.gate.broken || this.gateOpen) return false;
+    if (!this.siege || this.gate.broken || this.gateOpen || this.breaches.length) return false;
     if (a.onWall || b.onWall || a.wallSquad || b.wallSquad || a.climbing || b.climbing) return false;
     return this.outside(a.pos.y) !== this.outside(b.pos.y);
   }
@@ -1175,7 +1272,14 @@ export class Battle {
     if (tgt.wallSquad && this.siege && sq.side === this.attSide && this.hasWeapon(sq.side, 'tower')) m *= 1.6;
     const hd = this.ground(sq.pos.x, sq.pos.y) - this.ground(tgt.pos.x, tgt.pos.y) + (sq.wallSquad ? this.wallH : 0);
     if (hd > 5) m *= 1.2;
-    const dmg = sq.troops * 0.0085 * st.atk * m / ts.def * dt;
+    let dmg = sq.troops * 0.0085 * st.atk * m / ts.def * dt;
+    if (this.isGun(sq)) {
+      // 槍械：一槍一個，與鎧甲無關；城垛提供掩護
+      const mg = this.M('p', 'mg');
+      const k = sq.type === 'cav' ? (mg ? 0.12 : 0.07) : (mg ? 0.14 : 0.08);
+      dmg = sq.troops * k * dt * (tgt.wallSquad ? 0.5 : 1) * (tgt.climbing ? 1.5 : 1);
+      tgt.morale -= dmg / Math.max(200, tgt.troops) * 25;
+    }
     tgt.loss += dmg; sq.killed += dmg;
     if (!sq.wallSquad) sq.yaw = lerpAngle(sq.yaw, Math.atan2(-(tgt.pos.x - sq.pos.x), -(tgt.pos.y - sq.pos.y)), Math.min(1, dt * 3));
     sq.fireCd -= dt;
@@ -1466,7 +1570,7 @@ export class Battle {
       if (s.side !== 'p' || s.dead) continue;
       if (!s.released && !s.hidden) { s.released = true; s.state = 'idle'; }
       if (s.order === 'move' && !s.moveTo) s.order = 'auto';
-      if (this.siege && this.defSide === 'p' && !s.wallSquad) { s.order = this.gate.broken || this.pursuing ? 'auto' : 'hold'; }
+      if (this.siege && this.defSide === 'p' && !s.wallSquad) { s.order = this.wallOpen() || this.pursuing ? 'auto' : 'hold'; }
     }
     if (this.squads.some(s => s.side === 'p' && s.hidden && !s.dead) && this.squads.some(e => e.side === 'e' && !e.dead && e.pos.y > -20)) this.triggerAmbush('p');
     this.enemyAI('p');
@@ -1516,17 +1620,21 @@ export class Battle {
       const s = pick(shooters);
       if (s) {
         const al = s.soldiers.filter(x => x.alive);
-        const gateT = this.siege && this.attSide === 'p' && !this.gate.broken && s.pos.distanceTo(this.gatePos()) < 60;
+        const struct = this.siege && this.attSide === 'p' && !this.wallOpen();
+        const blk = struct && s.aim === 'wall' ? this.nearestBlock(s.pos) : null;
+        const wallT = blk && Math.hypot(blk.x - s.pos.x, this.zw - s.pos.y) < 60;
+        const gateT = struct && !blk && s.pos.distanceTo(this.gatePos()) < 60;
         const t = foes.filter(e => e.pos.distanceTo(s.pos) < 65).sort((a, b) => a.pos.distanceTo(s.pos) - b.pos.distanceTo(s.pos))[0];
-        if (al.length && (gateT || t)) {
+        if (al.length && (gateT || wallT || t)) {
           for (let k = 0; k < Math.min(3, al.length); k++) {
             const so = pick(al), from = new THREE.Vector3(so.x, (so.y || 0) + 1.7, so.z);
             const gp = this.gatePos();
-            const tp = gateT ? new THREE.Vector3(gp.x + rand(-3, 3), this.ground(gp.x, gp.y) + rand(2, 6), this.zw + this.sgnAtt * 1.5) : ptOf(t);
+            const tp = gateT ? new THREE.Vector3(gp.x + rand(-3, 3), this.ground(gp.x, gp.y) + rand(2, 6), this.zw + this.sgnAtt * 1.5)
+              : wallT ? new THREE.Vector3(blk.x + rand(-3, 3), this.ground(blk.x, this.zw) + rand(2, this.wallH), this.zw + this.sgnAtt * 3.6) : ptOf(t);
             this.muzzle(from.x, from.y, from.z, 4);
-            this.launchShell(from, tp, 0.45 + from.distanceTo(tp) / 120, () => { if (gateT) this.gate.hp -= 140; else hurt(t, 0.008, 2.5); }, { rocket: true, trail: true, arc: 0.03, big: 0.7 });
+            this.launchShell(from, tp, 0.45 + from.distanceTo(tp) / 120, () => { if (gateT) this.gate.hp -= 140; else if (wallT) this.damageBlock(blk, 90); else hurt(t, 0.008, 2.5); }, { rocket: true, trail: true, arc: 0.03, big: 0.7 });
           }
-          if (!this._rlog || this.simT - this._rlog > 14) { this._rlog = this.simT; this.log('p', gateT ? '火箭筒轟擊城門！' : '火箭筒齊射！'); }
+          if (!this._rlog || this.simT - this._rlog > 14) { this._rlog = this.simT; this.log('p', gateT ? '火箭筒轟擊城門！' : wallT ? '火箭筒轟擊城牆！' : '火箭筒齊射！'); }
         }
       }
     }
@@ -1560,7 +1668,7 @@ export class Battle {
       }
     }
     // 坦克攻城：砲擊城門
-    if (this.siege && !this.gate.broken) for (const s of this.squads) if (s.type === 'tank' && s.side === this.attSide && !s.dead && s.pos.distanceTo(this.gatePos()) < 60) this.gate.hp -= 25 * s.soldiers.filter(x => x.alive).length * dt;
+
   }
   launchShell(from, to, dur, onHit, o = {}) {
     const m = o.rocket ? new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.9, 6).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x4a5636 }))
@@ -2109,6 +2217,11 @@ export class Battle {
     if (!sq || sq.side !== 'p' || sq.dead) return;
     const mk = (t, fn, on) => { const b = el('button', 'btn small' + (on ? ' active' : ''), t, o); b.onclick = fn; };
     if (this.siege && this.defSide === 'p' && !sq.wallSquad && !this.gate.broken) mk(sq.sally ? '回城' : '出城突擊', () => { sq.sally = !sq.sally; sq.order = sq.sally ? 'auto' : 'retreat'; sq.released = true; this.updateOrders(); }, sq.sally);
+    if (this.siege && this.attSide === 'p' && !this.wallOpen() && (sq.type === 'tank' || ((sq.type === 'inf' || sq.type === 'spear') && this.M('p', 'rpg')))) {
+      const cur = sq.aim || (sq.type === 'tank' ? 'wall' : 'gate');
+      mk(sq.type === 'tank' ? '砲擊城門' : '火箭轟門', () => { sq.aim = 'gate'; sq.order = 'auto'; sq.released = true; this.updateOrders(); }, cur === 'gate');
+      mk(sq.type === 'tank' ? '轟擊最近城牆' : '火箭轟牆', () => { sq.aim = 'wall'; sq.order = 'auto'; sq.released = true; this.updateOrders(); }, cur === 'wall');
+    }
     if (!sq.released && !sq.hidden) mk('出擊', () => { sq.released = true; sq.state = 'idle'; this.buildCards(); this.updateOrders(); });
     if (sq.hidden) mk('伏兵殺出', () => this.useTactic('p', 'ambush'));
     mk('自動進攻', () => { sq.order = 'auto'; sq.moveTo = null; sq.released = true; this.updateOrders(); }, sq.order === 'auto');
@@ -2454,10 +2567,12 @@ export class Battle {
           <div class="sec-title">部隊編制（第一隊為主帥）　敵軍約 ${fmt(this.sides.e.init || this.sideTroops('e'))}</div>
           ${rows.map((r, i) => `<div class="sq-row" data-i="${i}">
               <div class="ix">${i === 0 ? '帥' : i + 1}</div>
-              <select class="ty">${Object.entries(UNIT_TYPES).filter(([k]) => !(this.naval && (k === 'cav' || k === 'tank')) && (k !== 'tank' || this.state.tanks > 0)).map(([k, t]) => `<option value="${k}" ${r.type === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select>
-              <select class="gn">${gopts(r.general)}</select>
+              ${r.type === 'tank' ? `<select class="ty" disabled><option>坦克</option></select><div class="gn tank-lbl">坦克部隊・${Math.round(r.troops / 500)} 輛</div>`
+                : `<select class="ty">${Object.entries(UNIT_TYPES).filter(([k]) => !(this.naval && (k === 'cav' || k === 'tank')) && (k !== 'tank' || (i > 0 && this.state.tanks > 0 && !rows.some(x => x.type === 'tank')))).map(([k, t]) => `<option value="${k}" ${r.type === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select>
+              <select class="gn">${gopts(r.general)}</select>`}
               <div class="tn">${fmt(r.troops)}</div>
-              <div class="sub"><input type="range" class="tr" min="0" max="${avail}" step="500" value="${r.troops}" style="flex:1">
+              <div class="sub"><input type="range" class="tr" min="0" max="${r.type === 'tank' ? (st.tanks || 0) * 500 : avail}" step="500" value="${r.troops}" style="flex:1">
+                ${this.siege && this.attSide === 'p' && (r.type === 'tank' || ((r.type === 'inf' || r.type === 'spear') && this.M('p', 'rpg'))) ? `<select class="aim" style="width:124px"><option value="gate" ${(r.aim || (r.type === 'tank' ? 'wall' : 'gate')) === 'gate' ? 'selected' : ''}>${r.type === 'tank' ? '砲擊' : '火箭'}城門</option><option value="wall" ${(r.aim || (r.type === 'tank' ? 'wall' : 'gate')) === 'wall' ? 'selected' : ''}>${r.type === 'tank' ? '砲擊' : '火箭'}最近城牆</option></select>` : ''}
                 <select class="wv" style="width:76px">${[1, 2, 3].map(w => `<option value="${w}" ${r.wave === w ? 'selected' : ''}>第${'一二三'[w - 1]}波</option>`).join('')}</select>
                 ${allowAmbush && i > 0 ? `<label class="am-lbl"><input type="checkbox" class="am" ${r.ambush ? 'checked' : ''}>設為伏兵</label>` : ''}
                 ${i > 0 ? '<button class="btn small rm">✕</button>' : ''}
@@ -2475,7 +2590,8 @@ export class Battle {
         panel.querySelectorAll('.fbtn').forEach(b => b.onclick = () => { this.sides.p.formation = b.dataset.f; this.applyPlayerRows(rows); draw(); });
         panel.querySelectorAll('.sq-row').forEach(rowEl => {
           const i = +rowEl.dataset.i, r = rows[i];
-          rowEl.querySelector('.ty').onchange = (e) => { r.type = e.target.value; this.applyPlayerRows(rows); draw(); };
+          rowEl.querySelector('.ty').onchange = (e) => { r.type = e.target.value; if (r.type === 'tank') { r.general = ''; r.troops = Math.min(r.troops || 500, (st.tanks || 0) * 500); } this.applyPlayerRows(rows); draw(); };
+          const aimEl = rowEl.querySelector('.aim'); if (aimEl) aimEl.onchange = (e) => { r.aim = e.target.value; this.applyPlayerRows(rows); };
           rowEl.querySelector('.gn').onchange = (e) => { r.general = e.target.value; if (i === 0) this.playerLeader = r.general || this.playerLeader; this.applyPlayerRows(rows); draw(); };
           const tr = rowEl.querySelector('.tr');
           tr.oninput = (e) => { r.troops = +e.target.value; rowEl.querySelector('.tn').textContent = fmt(r.troops); };

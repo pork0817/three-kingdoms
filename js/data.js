@@ -265,7 +265,7 @@ export const UNIT_TYPES = {
   spear: { name: '槍兵', icon: '槍', atk: 0.95, def: 1.2, speed: 6.5, range: 3.5, color: '#9fb6c9' },
   cav: { name: '騎兵', icon: '騎', atk: 1.25, def: 0.95, speed: 14, range: 3, color: '#d68b5a' },
   archer: { name: '弓兵', icon: '弓', atk: 0.7, def: 0.7, speed: 6.5, range: 48, color: '#8fc08a' },
-  tank: { name: '坦克', icon: '戰', atk: 3.2, def: 4.5, speed: 10, range: 40, color: '#8a9a7a', modern: true },
+  tank: { name: '坦克', icon: '戰', atk: 3.2, def: 4.5, speed: 10, range: 120, color: '#8a9a7a', modern: true },
 };
 // 相剋：COUNTER[攻][守]
 export const COUNTER = {

@@ -239,17 +239,22 @@ export function makeWall(len, h, colorCss, text) {
   const add = (geo, m, x, y, z) => { const me = new THREE.Mesh(geo, m); me.position.set(x, y, z); me.castShadow = true; me.receiveShadow = true; g.add(me); return me; };
   const gateW = 12, T = 7;
   const segLen = (len - gateW) / 2;
+  // 城牆分段（可被轟出缺口）
+  const nb = 14, bw = segLen / nb, blocks = [];
+  for (const s of [-1, 1]) for (let i = 0; i < nb; i++) blocks.push({ lx: s * (gateW / 2 + bw * (i + 0.5)), w: bw, meshes: [] });
+  const blockOf = (x) => blocks.reduce((a, b) => Math.abs(b.lx - x) < Math.abs(a.lx - x) ? b : a);
+  const addB = (geo, m, x, y, z) => { const me = add(geo, m, x, y, z); blockOf(x).meshes.push(me); return me; };
+  for (const b of blocks) addB(box(b.w + 0.02, h, T), stone, b.lx, h / 2, 0);
   for (const s of [-1, 1]) {
-    const cx = s * (gateW / 2 + segLen / 2);
-    add(box(segLen, h, T), stone, cx, h / 2, 0);
     // 雉堞
-    for (let x = gateW / 2 + 1; x < len / 2; x += 2.2) add(box(1.1, 1.2, 0.6), dark, s * x, h + 0.6, T / 2 - 0.3);
+    for (let x = gateW / 2 + 1; x < len / 2; x += 2.2) addB(box(1.1, 1.2, 0.6), dark, s * x, h + 0.6, T / 2 - 0.3);
     for (let x = gateW / 2 + 12; x < len / 2; x += 30) {
-      add(box(7, h + 3, 9), stone, s * x, (h + 3) / 2, 0);
-      add(box(6, 3, 6), red, s * x, h + 4.5, 0);
-      add(cone(5.8, 3, 4), roof, s * x, h + 7.5, 0).rotation.y = Math.PI / 4;
+      addB(box(7, h + 3, 9), stone, s * x, (h + 3) / 2, 0);
+      addB(box(6, 3, 6), red, s * x, h + 4.5, 0);
+      addB(cone(5.8, 3, 4), roof, s * x, h + 7.5, 0).rotation.y = Math.PI / 4;
     }
   }
+  g.userData.blocks = blocks;
   // 城門與城樓
   add(box(4, h + 1, T + 2), stone, -gateW / 2 - 2, (h + 1) / 2, 0);
   add(box(4, h + 1, T + 2), stone, gateW / 2 + 2, (h + 1) / 2, 0);
