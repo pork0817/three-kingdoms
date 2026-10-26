@@ -1901,10 +1901,6 @@ export class Battle {
     const sq = this.selected;
     if (!sq || sq.side !== 'p' || sq.dead) return;
     const mk = (t, fn, on) => { const b = el('button', 'btn small' + (on ? ' active' : ''), t, o); b.onclick = fn; };
-    if (this.siege && this.attSide === 'p' && !this.gate.broken && (sq.type === 'inf' || sq.type === 'spear') && !sq.onWall && !sq.climbing) {
-      mk(sq.engine === 'cart' ? '推衝車撞門' : '扛撞木撞門', () => { sq.siegeMode = 'ram'; if (sq.engine == null) this.assignEngine(sq); sq.target = null; sq.order = 'auto'; sq.released = true; this.updateOrders(); }, sq.siegeMode === 'ram');
-      mk('架雲梯攀城', () => { sq.siegeMode = 'climb'; this.removeEngine(sq); sq.target = null; sq.order = 'auto'; sq.released = true; this.updateOrders(); }, sq.siegeMode === 'climb');
-    }
     if (this.siege && this.defSide === 'p' && !sq.wallSquad && !this.gate.broken) mk(sq.sally ? '回城' : '出城突擊', () => { sq.sally = !sq.sally; sq.order = sq.sally ? 'auto' : 'retreat'; sq.released = true; this.updateOrders(); }, sq.sally);
     if (!sq.released && !sq.hidden) mk('出擊', () => { sq.released = true; sq.state = 'idle'; this.buildCards(); this.updateOrders(); });
     if (sq.hidden) mk('伏兵殺出', () => this.useTactic('p', 'ambush'));
@@ -2311,7 +2307,7 @@ export class Battle {
     const c = this.cfg, st = this.state;
     let txt = c.tips || '';
     const hasCity = /城/.test(c.tips || '');
-    if (this.siege && this.attSide === 'p' && !hasCity) txt += (txt ? '　' : '') + '攻城戰：開戰時兵力最多的步兵／槍兵負責撞門（有衝車就推衝車，最多兩隊，否則扛撞木），其餘架雲梯攀城；戰鬥中點選部隊可切換「撞門／攀城」。井闌、霹靂車可壓制城頭守軍。';
+    if (this.siege && this.attSide === 'p' && !hasCity) txt += (txt ? '　' : '') + '攻城戰：開戰時兵力最多的步兵／槍兵負責撞門（有衝車就推衝車，最多兩隊，否則扛撞木），其餘部隊同時架雲梯攀城，兩路並進。井闌、霹靂車可壓制城頭守軍。';
     if (this.siege && this.defSide === 'p' && !hasCity) txt += (txt ? '　' : '') + '守城戰：弓兵自動佈於城牆。敵軍逼近城下時可用滾木礌石；火油可焚毀衝車。城門未破前，守軍需下令「出城突擊」才能出城。';
     if (!txt) return '';
     const rows = [];
@@ -2345,7 +2341,7 @@ export class Battle {
     this.assignSiegeRoles();
     if (this.siege && this.attSide === 'p') {
       const r = this.squads.filter(s => s.side === 'p' && s.siegeMode === 'ram');
-      if (r.length) this.log('p', `${r.map(s => this.sqName(s)).join('、')}${this.hasWeapon('p', 'ram') ? '推衝車' : '扛撞木'}撞門，其餘部隊架雲梯攀城（點選部隊可切換）`);
+      if (r.length) this._roleMsg = `${r.map(s => this.sqName(s)).join('、')}${this.hasWeapon('p', 'ram') ? '推衝車' : '扛撞木'}撞門，其餘部隊同時架雲梯攀城`;
     }
     this.phase = 'fight';
     this.paused = false;
@@ -2354,6 +2350,7 @@ export class Battle {
     this.camTo(new THREE.Vector3(0, 70, (this.siege && this.attSide === 'e') ? 120 : 150), new THREE.Vector3(0, 0, this.siege ? this.zw * 0.5 : 10), 1200);
     SFX.drumRoll(10, 0.18); SFX.horn();
     this.log('p', '擂鼓進軍！');
+    if (this._roleMsg) this.log('p', this._roleMsg);
     if (this.cfg.waterCut === 'p') this.log('e', '我軍水道被斷，士氣逐漸低落！');
     if (this.state.food <= 0) { for (const s of this.squads) if (s.side === 'p') s.morale = Math.min(s.morale, 70); this.log('e', '我軍糧草斷絕，士卒飢疲！'); }
     if (this.cfg.flood) this.doFlood(this.cfg.flood);
