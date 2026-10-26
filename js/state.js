@@ -75,7 +75,7 @@ export class GameState {
   }
   has(g) { return this.generals.includes(g); }
   hasTactic(t) { return this.tactics.includes(t); }
-  hasWeapon(w) { return this.weapons.includes(w); }
+  hasWeapon(w) { return w === 'ladder' || this.weapons.includes(w); }
   getRel(a, b) { return this.rel[relKey(a, b)] ?? -10; }
   addRel(a, b, n) { const k = relKey(a, b); this.rel[k] = Math.max(-100, Math.min(100, (this.rel[k] ?? -10) + n)); }
   genFaction(g) {

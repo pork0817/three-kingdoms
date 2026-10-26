@@ -428,6 +428,7 @@ export class Battle {
   }
 
   hasWeapon(side, w) {
+    if (w === 'ladder') return true;
     if (side === 'p') return this.state.hasWeapon(w);
     return (this.cfg.enemy.weapons || []).includes(w);
   }
@@ -2233,12 +2234,11 @@ export class Battle {
               </div></div>`).join('')}
           ${rows.length < 6 ? '<button class="btn small add">＋ 增加部隊</button>' : ''}
           <div class="sum"><span>已編入：<b style="color:${used > avail ? '#ff8a7a' : '#fff'}">${fmt(used)}</b> / 可用 ${fmt(avail)}</span><span>剩餘預備 ${fmt(Math.max(0, st.troops - used))}</span></div>
-          <div class="sec-title">兵法</div>
-          <div class="tactic-list">${st.tactics.map(t => `【${TACTICS[t].name}】${TACTICS[t].desc}`).join('<br>')}</div>
-          <div class="sec-title">兵器</div>
-          <div class="tactic-list">${st.weapons.length ? st.weapons.map(w => `【${WEAPONS[w].name}】${WEAPONS[w].desc}`).join('<br>') : '無'}</div>
-          ${this.siege ? `<div class="tactic-list" style="margin-top:8px;color:#ffd36a">${this.defSide === 'p' ? '守城戰：弓兵將佈於城牆之上，防禦大增。' : '攻城戰：需攻破城門（衝車加速），或以雲梯攀城。'}</div>` : ''}
-          ${this.cfg.tips ? `<div class="tactic-list" style="margin-top:8px;color:#9fd3ff">軍師建言：${this.cfg.tips}</div>` : ''}
+          ${this.adviceHTML(allowAmbush)}
+          <div class="sec-title">本戰可用兵法（戰鬥中點右側按鈕施放）</div>
+          <div class="tactic-list">${st.tactics.map(t => `<span class="tac-ic">${TACTICS[t].icon}</span>【${TACTICS[t].name}】${TACTICS[t].desc}${this.tacticUsable(t) ? '' : ' <span class="adv-no">（本戰無法使用）</span>'}`).join('<br>')}</div>
+          <div class="sec-title">兵器（自動生效）</div>
+          <div class="tactic-list">【雲梯】基本軍備${st.weapons.length ? '<br>' + st.weapons.map(w => `【${WEAPONS[w].name}】${WEAPONS[w].desc}`).join('<br>') : ''}</div>
           <div class="modal-btns"><button class="btn primary go" ${used > avail || used <= 0 ? 'disabled' : ''}>擂鼓開戰</button></div>`;
         panel.querySelectorAll('.fbtn').forEach(b => b.onclick = () => { this.sides.p.formation = b.dataset.f; this.applyPlayerRows(rows); draw(); });
         panel.querySelectorAll('.sq-row').forEach(rowEl => {
@@ -2258,6 +2258,8 @@ export class Battle {
           rows.push({ type: 'inf', general: free, troops: Math.max(0, Math.min(3000, avail - rows.reduce((a, r) => a + r.troops, 0))), wave: 2, ambush: false });
           this.applyPlayerRows(rows); draw();
         };
+        const os = panel.querySelector('.open-shop');
+        if (os) os.onclick = () => this.app.openShop('auto', () => { this.sides.p.tactics = [...new Set([...this.sides.p.tactics, ...st.tactics])]; draw(); });
         panel.querySelector('.go').onclick = () => {
           if (!rows[0].general) { const g = st.generals.find(g => !rows.some(r => r.general === g) && !injured.includes(g)); rows[0].general = g || ''; }
           this.playerLeader = rows[0].general || this.playerLeader;
@@ -2267,6 +2269,44 @@ export class Battle {
       };
       draw();
     });
+  }
+
+  // 本戰是否可能用上某兵法（布陣時判斷）
+  tacticUsable(t) {
+    if (t === 'fireship') return this.naval;
+    if (t === 'water') return !!(this.cfg.river || this.cfg.riverMid) && !this.naval;
+    if (t === 'rockfall') return (this.siege && this.defSide === 'p') || this.terrain === 'mountain' || !!this.cfg.hill;
+    if (t === 'ambush') return (this.terrain === 'mountain' || this.cfg.forest || this.cfg.allowAmbush) && !this.siege && !this.naval;
+    if (t === 'fire' || t === 'firearrow') return this.weather !== 'rain';
+    if (t === 'raid') return false;
+    if (t === 'charge') return !this.naval;
+    return true;
+  }
+  // 軍師建言：列出建言中提到的兵法／兵器，標示是否擁有、怎麼用、去哪裡取得
+  adviceHTML(allowAmbush) {
+    const c = this.cfg, st = this.state;
+    let txt = c.tips || '';
+    const hasCity = /城/.test(c.tips || '');
+    if (this.siege && this.attSide === 'p' && !hasCity) txt += (txt ? '　' : '') + '攻城戰：步兵、槍兵扛撞木撞門（有衝車更快），或架雲梯攀城；井闌、霹靂車可壓制城頭守軍。';
+    if (this.siege && this.defSide === 'p' && !hasCity) txt += (txt ? '　' : '') + '守城戰：弓兵自動佈於城牆。敵軍逼近城下時可用滾木礌石；火油可焚毀衝車。城門未破前，守軍需下令「出城突擊」才能出城。';
+    if (!txt) return '';
+    const rows = [];
+    const seen = new Set();
+    const HOW = { fire: '戰鬥中點右側「火」，再點要縱火的敵軍', confuse: '戰鬥中點右側「亂」，自動選擇最強的敵軍', ambush: '布陣時在部隊列勾選「設為伏兵」；開戰後點右側「伏」或待敵軍接近自動殺出' };
+    for (const [id, t] of Object.entries(TACTICS)) {
+      if (!txt.includes(t.name) || seen.has(t.name)) continue; seen.add(t.name);
+      const has = st.hasTactic(id) || (id === 'ambush' && allowAmbush);
+      rows.push(has ? `<div class="adv-row ok">✔ 【${t.name}】${id === 'ambush' ? '本戰可以設伏' : '已習得'}：${HOW[id] || `戰鬥中點右側「${t.icon}」按鈕施放`}</div>`
+        : `<div class="adv-row no">✘ 【${t.name}】尚未習得：可在「市集 → 兵書」以 ${t.price} 金購買${id === 'ambush' ? '（本戰地形不適合設伏）' : ''}</div>`);
+    }
+    for (const [id, w] of Object.entries(WEAPONS)) {
+      if (!txt.includes(w.name) || seen.has(w.name)) continue; seen.add(w.name);
+      const has = this.hasWeapon('p', id);
+      rows.push(has ? `<div class="adv-row ok">✔ 【${w.name}】已擁有（自動生效）</div>` : `<div class="adv-row no">✘ 【${w.name}】未擁有：可在「市集 → 兵器」以 ${w.price} 金購買</div>`);
+    }
+    if (/伏兵/.test(txt) && !seen.has('伏兵')) rows.push(allowAmbush ? '<div class="adv-row ok">✔ 本戰可以設伏：在部隊列勾選「設為伏兵」</div>' : '<div class="adv-row no">✘ 本戰無法設伏</div>');
+    const missing = rows.some(r => r.includes('adv-row no') && r.includes('市集'));
+    return `<div class="advice"><div class="sec-title">軍師建言</div><div class="adv-txt">${txt}</div>${rows.join('')}${missing && this.app.openShop ? `<button class="btn small open-shop">前往市集購買（持有 ${fmt(st.gold)} 金）</button>` : ''}</div>`;
   }
 
   async fight() {

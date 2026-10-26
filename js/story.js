@@ -62,7 +62,7 @@ const WEI = [
       ['say', '蔣濟', '將軍，濡須東有羨溪。若揚言攻羨溪，朱桓必分兵往救，我軍再以主力急攻濡須，可收奇效。'],
       ['choice', '如何進攻濡須？', [
         H('聲東擊西：揚言攻羨溪，誘朱桓分兵', '守軍大減；習得兵法【誘敵深入】', S => { S.flag('ruxuFeint'); S.learn('feint'); }),
-        T('集中兵力，正面強攻', '獲得兵器【衝車】【雲梯】', S => { S.gainWeapon('ram'); S.gainWeapon('ladder'); }),
+        T('集中兵力，正面強攻', '獲得兵器【衝車】【井闌】', S => { S.gainWeapon('ram'); S.gainWeapon('tower'); }),
       ]],
       ['battle', S => ({
         name: '濡須之戰', sub: '曹仁 vs 朱桓', terrain: 'siege', attacker: 'player', cityName: '濡須', river: true,
@@ -71,7 +71,7 @@ const WEI = [
           tactics: ['volley', 'shield', 'rockfall', 'drum'], comp: { inf: 0.3, spear: 0.2, archer: 0.5 } },
         intro: [['zhuhuan', '兵法云：「客倍而主人半」。今曹仁遠來疲憊，我據高城、臨大江，以逸待勞，豈有不勝之理！']],
         parley: { enemyOpen: ['曹仁老賊！濡須城高池深，你縱有十萬之眾，又能奈我何？'], noSurrender: true },
-        tips: '以步兵、槍兵撞破城門，弓兵壓制城頭守軍。衝車可大幅加快破門；雲梯可讓步兵攀城。',
+        tips: '以步兵、槍兵扛撞木撞破城門（有【衝車】更快），或架雲梯攀城；弓兵壓制城頭守軍，有【井闌】效果更好。',
       }), [
         ['narr', '魏軍攻破濡須塢，朱桓退守江南。長江北岸盡為大魏所有！'],
         ['owner', 'ruxu', 'wei'],
@@ -96,7 +96,7 @@ const WEI = [
       ['say', 'zhanghe', '哈哈！馬謖紙上談兵之輩也。山上無水，我若斷其汲道……'],
       ['choice', '如何破馬謖？', [
         H('圍山斷水，待其自亂', '蜀軍水源被斷，士氣將持續下降', S => S.flag('waterCut')),
-        T('趁其立足未穩，強攻上山', '速戰速決；獲得兵器【雲梯】', S => S.gainWeapon('ladder')),
+        T('趁其立足未穩，四面圍攻上山', '速戰速決；習得兵法【包圍】', S => S.learn('encircle')),
       ]],
       ['battle', S => ({
         name: '街亭之戰', sub: '張郃 vs 馬謖', terrain: 'plains', hill: 'e',
@@ -457,8 +457,8 @@ const SHU = [
         ['say', 'zhugeliang', '陳倉城小，郝昭兵少。先遣其同鄉靳詳前往勸降。'],
         ['narr', '郝昭於城樓上答曰：「魏家科法，卿所練也；我之為人，卿所知也。我受國恩多而門戶重，但有必死耳！」'],
         ['choice', '如何攻城？', [
-          H('雲梯、衝車齊上，晝夜強攻', '獲得兵器【雲梯】【衝車】', S => { S.gainWeapon('ladder'); S.gainWeapon('ram'); }),
-          T('打造霹靂車，先轟城頭', '獲得兵器【霹靂車】【雲梯】', S => { S.gainWeapon('catapult'); S.gainWeapon('ladder'); }),
+          H('雲梯、衝車、井闌齊上，晝夜強攻', '獲得兵器【衝車】【井闌】', S => { S.gainWeapon('ram'); S.gainWeapon('tower'); }),
+          T('打造霹靂車，先轟城頭', '獲得兵器【霹靂車】', S => S.gainWeapon('catapult')),
           T('掘地道潛入城中', '城門耐久大減', S => S.flag('tunnel')),
         ]],
         ['battle', S => ({
@@ -469,7 +469,7 @@ const SHU = [
           reinforce: { side: 'e', at: 150, troops: 15000, general: 'zhanghe', types: ['cav', 'inf'], msg: '張郃率魏軍援兵趕到！' },
           noSurrender: true,
           parley: { enemyOpen: ['諸葛亮，陳倉在我郝昭手中，你休想前進一步！'] },
-          tips: '須在張郃援軍到達前破城。弓兵壓制城頭，步兵撞門或攀城。',
+          tips: '須在張郃援軍到達前破城。弓兵壓制城頭，步兵撞門或架雲梯攀城；有【衝車】【井闌】【霹靂車】更容易。',
         }), [
           ['narr', '陳倉陷落！關中門戶洞開！'],
           ['owner', 'chencang', 'shu'],
@@ -572,7 +572,7 @@ const WU = [
         enemyMorale: S.flags.wait ? 70 : 100,
         enemyAmbush: S.flags.bait ? { count: 2, share: 0.2, generals: ['wuban', 'guanxing'] } : null,
         parley: { enemyOpen: ['孫權鼠輩，害我二弟！今日便要你江東血債血償！'], persuade: '劉備，你遠道而來，已成強弩之末，何不罷兵回蜀？' },
-        tips: S.flags.wait ? '敵營在林中！點選【火攻】再點敵軍部隊，火勢將會在連營中蔓延。' : '小心山谷中的伏兵。',
+        tips: S.flags.wait ? '敵營在林中！使用【火攻】點燃連營，火勢會蔓延；也可用【火箭】。' : '小心山谷中的伏兵，可用【疑兵】動搖敵軍。',
         pursuitNote: '劉備敗走馬鞍山，欲退往白帝城……',
       }), [
         ['narr', '吳軍乘夜順風放火，連破蜀軍四十餘營。劉備夜遁白帝城，蜀軍舟船器械、水步軍資一時略盡。'],
@@ -658,8 +658,8 @@ const WU = [
       ['narr', '合肥新城守將滿寵，智勇兼備。新城遠離水道，吳軍戰船無法靠近。'],
       ['say', 'luxun', '陛下，滿寵善用奇兵。夜間須嚴防敵軍偷營，焚我攻城器械。'],
       ['choice', '如何攻城？', [
-        T('分兵夜巡，嚴防偷營', '攻城器械得以保全：獲得【霹靂車】【雲梯】', S => { S.gainWeapon('catapult'); S.gainWeapon('ladder'); }),
-        H('晝夜猛攻，速戰速決', '獲得【雲梯】【衝車】', S => { S.gainWeapon('ladder'); S.gainWeapon('ram'); }),
+        T('分兵夜巡，嚴防偷營', '攻城器械得以保全：獲得【霹靂車】【井闌】', S => { S.gainWeapon('catapult'); S.gainWeapon('tower'); }),
+        H('晝夜猛攻，速戰速決', '獲得兵器【衝車】', S => S.gainWeapon('ram')),
       ]],
       ['battle', {
         name: '合肥新城之戰', sub: '孫權 vs 滿寵', terrain: 'siege', attacker: 'player', cityName: '合肥', gateHP: 6000,

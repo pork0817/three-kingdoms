@@ -338,3 +338,10 @@ button { font-family: var(--font); }
 .shop-q { font-size: 12px; color: #a8987a; margin-top: 2px; }
 .shop-own { color: var(--gold); font-size: 13px; }
 .sq-row .am-lbl { color: #9fd3ff; font-weight: 700; }
+
+.advice { margin: 10px 0; padding: 8px 10px; border: 1px solid rgba(159,211,255,.4); border-radius: 6px; background: rgba(40,70,100,.18); }
+.adv-txt { color: #cfe6ff; font-size: 13px; line-height: 1.7; margin-bottom: 4px; }
+.adv-row { font-size: 12.5px; line-height: 1.6; padding: 2px 0; }
+.adv-row.ok { color: #9fe6a8; } .adv-row.no { color: #ffb4a6; }
+.adv-no { color: #b9a77a; font-size: 12px; }
+.tac-ic { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border: 1px solid #c9322a; color: #e0473a; font-size: 11px; border-radius: 3px; margin-right: 2px; }

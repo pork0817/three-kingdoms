@@ -23,7 +23,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 
 const state = new GameState();
-const app = { renderer, state, view: null, setView(v) { this.view = v; } };
+const app = { renderer, state, view: null, setView(v) { this.view = v; }, openShop: (t, cb) => shopModal(t, cb) };
 let map, stage;
 const pendingLearn = [];
 state.on((type, d) => {
@@ -116,7 +116,7 @@ function helpModal() {
   <b>作戰</b>：左鍵（觸控：點一下）選取部隊，再點地面移動、點敵軍攻擊。右側為兵法；左下控制速度與波次。拖曳旋轉視角、滾輪／雙指縮放、WASD 平移。<br>
   <b>地形天氣</b>：渡河時移動緩慢且防禦下降；居高臨下攻擊加成；雨天無法有效火攻、弓兵減弱；夜晚與大霧視野受限；水戰中騎兵無法上陣，可用火船順風攻擊。<br>
   <b>兵種相剋</b>：槍兵剋騎兵、騎兵剋弓兵、弓兵剋步兵、步兵剋槍兵。<br>
-  <b>攻守城</b>：攻城時步兵、槍兵會扛撞木撞門，有【衝車】破門更快；有【雲梯】可攀城、【井闌】讓弓兵壓制城頭、【霹靂車】投石。守城時城門未破，守軍只能留在城內或城頭；可對部隊下令「出城突擊」，城門會打開（敵軍也可趁機衝入）。<br>
+  <b>攻守城</b>：攻城時步兵、槍兵會扛撞木撞門，有【衝車】破門更快；人人都有雲梯可攀城（基本軍備），【井闌】讓弓兵壓制城頭、【霹靂車】投石。守城時城門未破，守軍只能留在城內或城頭；可對部隊下令「出城突擊」，城門會打開（敵軍也可趁機衝入）。<br>
   <b>伏兵</b>：山地、林地或劇情允許時，布陣表中可勾選「設為伏兵」，部隊會藏於兩側山林，敵軍接近或按【伏】時殺出。<br>
   <b>市集</b>：可用金錢購買兵書（學習兵法）、兵器，以及糧草、僱傭兵、戰馬。
   </div>`, [{ text: '明白了', primary: true }]);
@@ -321,8 +321,10 @@ function campModal() {
 }
 
 // —— 市集：兵書、兵器、物資 ——
-function shopModal(tab = 'tactic') {
+function shopModal(tab = 'tactic', onClose = null) {
+  if (tab === 'auto') tab = 'weapon';
   const bg = el('div', 'modal-bg', '', root());
+  bg.style.zIndex = 75;
   const m = el('div', 'modal shop', '', bg);
   const draw = () => {
     const tabs = [['tactic', '兵書'], ['weapon', '兵器'], ['goods', '物資']];
@@ -332,7 +334,7 @@ function shopModal(tab = 'tactic') {
       return `<div class="shop-row ${owned ? 'owned' : ''}"><div class="shop-ic">${t.icon}</div><div class="shop-info"><b>${t.name}</b><div class="hint-txt">${t.desc}</div><div class="shop-q">${t.quote}</div></div>
         ${owned ? '<span class="shop-own">已習得</span>' : `<button class="btn small" data-t="${k}" ${state.gold < t.price ? 'disabled' : ''}>${t.price} 金</button>`}</div>`;
     }).join('');
-    if (tab === 'weapon') body = Object.entries(WEAPONS).map(([k, w]) => {
+    if (tab === 'weapon') body = Object.entries(WEAPONS).filter(([k, w]) => !w.basic).map(([k, w]) => {
       const owned = state.hasWeapon(k);
       return `<div class="shop-row ${owned ? 'owned' : ''}"><div class="shop-ic">器</div><div class="shop-info"><b>${w.name}</b><div class="hint-txt">${w.desc}</div></div>
         ${owned ? '<span class="shop-own">已擁有</span>' : `<button class="btn small" data-w="${k}" ${state.gold < (w.price || 1500) ? 'disabled' : ''}>${w.price || 1500} 金</button>`}</div>`;
@@ -349,7 +351,7 @@ function shopModal(tab = 'tactic') {
     }
     m.innerHTML = `<h2>市集</h2><div class="shop-tabs">${tabs.map(([k, n]) => `<button class="btn small ${tab === k ? 'active' : ''}" data-tab="${k}">${n}</button>`).join('')}<span class="shop-gold">持有 ${fmt(state.gold)} 金・糧 ${fmt(state.food)}</span></div>
       <div class="shop-list">${body}</div><div class="modal-btns"><button class="btn primary close">關閉</button></div>`;
-    m.querySelector('.close').onclick = () => { bg.remove(); updateHUD(); };
+    m.querySelector('.close').onclick = () => { bg.remove(); updateHUD(); onClose && onClose(); };
     m.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; draw(); });
     m.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { const t = TACTICS[b.dataset.t]; state.gold -= t.price; state.learn(b.dataset.t); draw(); flushLearn(); });
     m.querySelectorAll('[data-w]').forEach(b => b.onclick = () => { const w = WEAPONS[b.dataset.w]; state.gold -= w.price || 1500; state.gainWeapon(b.dataset.w); draw(); });
