@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { FACTIONS, GENERALS, TACTICS, WEAPONS, UNIT_TYPES, COUNTER, FORMATIONS, gname } from './data.js';
 import { makeNoise, clamp, lerp, smoothstep, rand, pick, sleep, tween, ease, fmt, mulberry32 } from './util.js';
-import { makeBanner, waveBanner, treeGeometries, makeWall, makeTent, makeCatapult, makeShip, makeRamCart, makeLogRam, makeLadder, makeSiegeTower, makeTank, makeDrone } from './models.js';
+import { makeBanner, waveBanner, treeGeometries, makeWall, makeTent, makeCatapult, makeShip, makeRamCart, makeLogRam, makeLadder, makeSiegeTower, makeTank, makeDrone, makeMortar, makeC4 } from './models.js';
 import { Q } from './settings.js';
 import { makeHero, soldierRig, poseAngles, animateHero } from './figures.js';
 import { battleLines, bark, logLine } from './dialogue.js';
@@ -237,7 +237,7 @@ export class Battle {
     this.batches = {};
     for (const side of ['p', 'e']) for (const type of Object.keys(UNIT_TYPES).filter(t => t !== 'tank')) {
       const ut = this.naval && type === 'cav' ? 'inf' : type;
-      const parts = soldierRig(ut, side === 'p' ? this.pf : this.ef, side === 'p' ? this.state.weapons : (this.cfg.enemy.weapons || []));
+      const parts = soldierRig(ut, side === 'p' ? this.pf : this.ef, side === 'p' ? this.state.weapons : (this.cfg.enemy.weapons || []), side === 'p' && this.state.timeTravel ? (this.state.modern || []) : []);
       const col = FACTIONS[side === 'p' ? this.pf : this.ef].color;
       const tm = new THREE.MeshStandardMaterial({ color: col, vertexColors: true, roughness: 0.75 });
       const bm = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.15 });
@@ -494,7 +494,7 @@ export class Battle {
   layoutSquad(sq) {
     sq.per = sq.type === 'tank' ? 500 : this.perSoldier;
     const n = sq.type === 'tank' ? clamp(Math.ceil(sq.troops / 500), 1, 10) : clamp(Math.ceil(sq.troops / sq.per), 6, 140);
-    const sp = SP[sq.type];
+    const sp = sq.type === 'cav' && this.M(sq.side, 'jeep') ? 3.6 : SP[sq.type];
     sq.soldiers = [];
     if (sq.wallSquad) {
       const w = n * 1.15;
@@ -1189,11 +1189,18 @@ export class Battle {
     const alive = sq.soldiers.filter(s => s.alive), talive = tgt.soldiers.filter(s => s.alive);
     if (!alive.length) return;
     if (sq.type === 'tank') {
-      for (const a of alive) { const b = talive.length ? pick(talive) : { x: tgt.pos.x, z: tgt.pos.y, y: 0 }; this.launchShell(new THREE.Vector3(a.x, a.y + 2.2, a.z), new THREE.Vector3(b.x, (b.y || 0), b.z), 0.5, null); }
+      alive.forEach((a, i) => {
+        const b = talive.length ? pick(talive) : { x: tgt.pos.x, z: tgt.pos.y, y: 0 };
+        const mesh = sq.tankMeshes?.[sq.soldiers.indexOf(a)], yaw = a.yaw + (mesh ? mesh.userData.turret.rotation.y : 0);
+        const from = new THREE.Vector3(a.x - Math.sin(yaw) * 5.6, this.ground(a.x, a.z) + 2.15, a.z - Math.cos(yaw) * 5.6);
+        setTimeout(() => { this.muzzle(from.x, from.y, from.z, 12); if (mesh) { const g = mesh.userData.gun; g.position.z = -3.0; tween(250, t => g.position.z = -3.0 - 0.4 * t); } }, i * 180);
+        this.launchShell(from, new THREE.Vector3(b.x, (b.y || this.ground(b.x, b.z)), b.z), 0.35, null, { arc: 0.01, small: true, big: 1.2 });
+      });
       return;
     }
     if (sq.type === 'archer' && this.M(sq.side, 'rifle')) {
       SFX.gunshot(0.16);
+      if (this.M(sq.side, 'mg')) n *= 2;
       for (let i = 0; i < n; i++) {
         const a = pick(alive), b = talive.length ? pick(talive) : { x: tgt.pos.x, z: tgt.pos.y, y: 0 };
         this.tracers.push({ from: new THREE.Vector3(a.x, a.y + 1.4, a.z), to: new THREE.Vector3(b.x + rand(-1, 1), (b.y || 0) + 1, b.z + rand(-1, 1)), t: -Math.random() * 0.3, dur: 0.12 });
@@ -1477,32 +1484,98 @@ export class Battle {
     if (!this.state.timeTravel || this.phase !== 'fight') return;
     const foes = this.enemiesOf('p').filter(e => !e.routed && (this.visibleTarget(e, 'p') || this.M('p', 'drone')));
     const mine = this.squads.filter(s => s.side === 'p' && !s.dead && !s.escaped);
-    const boomAt = (t, pct, mor, label) => {
-      const p = new THREE.Vector3(t.pos.x + rand(-6, 6), this.ground(t.pos.x, t.pos.y), t.pos.y + rand(-6, 6));
-      const back = mine[0] ? mine[0].pos : new V2(0, 120);
-      this.launchShell(new THREE.Vector3(back.x, 30, back.y + 30), p, 1.4, () => { t.loss += t.troops * pct + 30; t.morale -= mor; });
-      if (label && (!this._mlog || this.simT - this._mlog > 10)) { this._mlog = this.simT; this.log('p', label); }
-    };
-    if (this.M('p', 'mortar') && foes.length && (this._mortT = (this._mortT ?? 4) - dt) <= 0) { this._mortT = 6; boomAt(foes.sort((a, b) => b.troops - a.troops)[0], 0.035, 6, '迫擊砲轟擊敵陣！'); }
-    if (this.M('p', 'drone') && foes.length && (this._droneT = (this._droneT ?? 8) - dt) <= 0) { this._droneT = 9; boomAt(pick(foes), 0.02, 4, '無人機投彈！'); }
-    if (this.M('p', 'medkit')) for (const s of mine) if (!s.engaged && s.troops < s.max) s.troops = Math.min(s.max, s.troops + s.max * 0.004 * dt);
-    if (this.M('p', 'c4') && this.siege && this.attSide === 'p' && !this.gate.broken && this.simT > 15 && !this._c4) {
-      this._c4 = true; this.gate.hp = 0;
+    const ptOf = (t) => { const al = t.soldiers.filter(x => x.alive); const so = al.length ? pick(al) : null; return so ? new THREE.Vector3(so.x, so.y || this.ground(so.x, so.z), so.z) : new THREE.Vector3(t.pos.x, this.ground(t.pos.x, t.pos.y), t.pos.y); };
+    const hurt = (t, pct, mor) => { t.loss += t.troops * pct + 25; t.morale -= mor; };
+    // 迫擊砲陣地
+    if (this.M('p', 'mortar')) {
+      if (!this.mortars) {
+        const A = this.anchor('p'), E = this.anchor('e'), back = Math.sign(A.y - E.y) || 1;
+        this.mortars = [-14, 0, 14].map(x => { const m = makeMortar(); const z = A.y + back * 24; m.position.set(A.x + x, this.ground(A.x + x, z), z); m.rotation.y = back > 0 ? 0 : Math.PI; this.scene.add(m); return m; });
+        this.log('p', '迫擊砲陣地架設完成！');
+      }
+      if (foes.length && (this._mortT = (this._mortT ?? 3) - dt) <= 0) {
+        this._mortT = 2.2; this._mortI = ((this._mortI || 0) + 1) % this.mortars.length;
+        const mo = this.mortars[this._mortI], t = foes.sort((a, b) => b.troops - a.troops)[Math.floor(Math.random() * Math.min(2, foes.length))];
+        const tip = new THREE.Vector3(0, 1.8, -1.2).applyMatrix4(mo.matrixWorld);
+        this.muzzle(tip.x, tip.y, tip.z, 10);
+        const tp = ptOf(t); tp.x += rand(-4, 4); tp.z += rand(-4, 4); tp.y = this.ground(tp.x, tp.z);
+        this.launchShell(tip, tp, 2.2, () => hurt(t, 0.016, 3), { arc: 0.55, small: true });
+        if (!this._mlog || this.simT - this._mlog > 12) { this._mlog = this.simT; this.log('p', '迫擊砲轟擊敵陣！'); }
+      }
+    }
+    // 無人機投彈
+    if (this.M('p', 'drone') && this.drone && foes.length && (this._droneT = (this._droneT ?? 8) - dt) <= 0) {
+      this._droneT = 7; const t = pick(foes), tp = ptOf(t);
+      this.launchShell(this.drone.position.clone(), tp, 1.1, () => hurt(t, 0.02, 4), { arc: 0.02, small: true });
+      if (!this._dlog || this.simT - this._dlog > 15) { this._dlog = this.simT; this.log('p', '無人機投彈！'); }
+    }
+    // 火箭筒
+    if (this.M('p', 'rpg') && (this._rpgT = (this._rpgT ?? 2) - dt) <= 0) {
+      this._rpgT = 1.6;
+      const shooters = mine.filter(s => (s.type === 'inf' || s.type === 'spear') && !s.hidden);
+      const s = pick(shooters);
+      if (s) {
+        const al = s.soldiers.filter(x => x.alive);
+        const gateT = this.siege && this.attSide === 'p' && !this.gate.broken && s.pos.distanceTo(this.gatePos()) < 60;
+        const t = foes.filter(e => e.pos.distanceTo(s.pos) < 65).sort((a, b) => a.pos.distanceTo(s.pos) - b.pos.distanceTo(s.pos))[0];
+        if (al.length && (gateT || t)) {
+          for (let k = 0; k < Math.min(3, al.length); k++) {
+            const so = pick(al), from = new THREE.Vector3(so.x, (so.y || 0) + 1.7, so.z);
+            const gp = this.gatePos();
+            const tp = gateT ? new THREE.Vector3(gp.x + rand(-3, 3), this.ground(gp.x, gp.y) + rand(2, 6), this.zw + this.sgnAtt * 1.5) : ptOf(t);
+            this.muzzle(from.x, from.y, from.z, 4);
+            this.launchShell(from, tp, 0.45 + from.distanceTo(tp) / 120, () => { if (gateT) this.gate.hp -= 140; else hurt(t, 0.008, 2.5); }, { rocket: true, trail: true, arc: 0.03, big: 0.7 });
+          }
+          if (!this._rlog || this.simT - this._rlog > 14) { this._rlog = this.simT; this.log('p', gateT ? '火箭筒轟擊城門！' : '火箭筒齊射！'); }
+        }
+      }
+    }
+    // 急救包：未交戰部隊恢復
+    if (this.M('p', 'medkit')) for (const s of mine) if (!s.engaged && s.troops < s.max) {
+      s.troops = Math.min(s.max, s.troops + s.max * 0.004 * dt);
+      if (Math.random() < dt * 0.8) { const so = pick(s.soldiers.filter(x => x.alive)); if (so) this.particlesAdd.emit(so.x, (so.y || 0) + 2.2, so.z, 0, 1.2, 0, 1.2, 1.4, 0.3, 1, 0.4, 0.9, 0, 0); }
+    }
+    // 塑膠炸藥：工兵在城門安置炸藥、倒數、引爆
+    if (this.M('p', 'c4') && this.siege && this.attSide === 'p' && !this.gate.broken) {
       const gp = this.gatePos();
-      for (let i = 0; i < 80; i++) this.particlesAdd.emit(gp.x + rand(-6, 6), rand(1, 9), gp.y, rand(-8, 8), rand(2, 12), rand(-8, 8), rand(0.5, 1.2), rand(3, 7), 1, rand(0.4, 0.8), 0.1, 1, 6, -2);
-      SFX.boom(0.9); this.log('p', '工兵引爆塑膠炸藥，城門被炸開了！'); this.camShake = 1;
+      if (!this._c4 && this.simT > 9) {
+        const c = makeC4(); c.position.set(gp.x - 1, this.ground(gp.x, gp.y) + 1.2, this.zw + this.sgnAtt * 1.3); c.rotation.y = this.sgnAtt > 0 ? 0 : Math.PI;
+        this.scene.add(c); this._c4 = { m: c, t: 6 };
+        this.log('p', '工兵潛至城下，安置塑膠炸藥！倒數五秒……');
+      }
+      if (this._c4 && this._c4.t > 0) {
+        this._c4.t -= dt; this._c4.m.userData.led.visible = Math.floor(this._c4.t * (this._c4.t < 2 ? 8 : 3)) % 2 === 0;
+        if (this._c4.t <= 0) {
+          this.scene.remove(this._c4.m); this.gate.hp = 0;
+          const y0 = this.ground(gp.x, gp.y);
+          for (let i = 0; i < 160; i++) this.particlesAdd.emit(gp.x + rand(-4, 4), y0 + rand(1, 8), this.zw + rand(-3, 3), rand(-14, 14), rand(3, 20), rand(-14, 14), rand(0.5, 1.3), rand(4, 9), 1, rand(0.35, 0.75), 0.08, 1, 8, -2);
+          for (let i = 0; i < 60; i++) this.particlesN.emit(gp.x + rand(-6, 6), y0 + rand(2, 10), this.zw + rand(-5, 5), rand(-4, 4), rand(2, 8), rand(-4, 4), rand(3, 6), rand(8, 14), 0.22, 0.2, 0.18, 0.7, -0.3, 4);
+          const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1.6, 40), new THREE.MeshBasicMaterial({ color: 0xffd090, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+          ring.rotation.x = -Math.PI / 2; ring.position.set(gp.x, y0 + 0.5, this.zw); this.scene.add(ring);
+          tween(900, t => { ring.scale.setScalar(1 + t * 30); ring.material.opacity = 1 - t; }).then?.(() => this.scene.remove(ring));
+          for (const s of this.squads) if (s.side === this.defSide && !s.dead && s.pos.distanceTo(gp) < 30) { s.loss += s.troops * 0.1; s.morale -= 25; }
+          SFX.boom(1); SFX.boom(0.8); this.camShake = 1.2;
+          this.log('p', '轟——！塑膠炸藥引爆，城門被炸得粉碎！');
+        }
+      }
     }
     // 坦克攻城：砲擊城門
     if (this.siege && !this.gate.broken) for (const s of this.squads) if (s.type === 'tank' && s.side === this.attSide && !s.dead && s.pos.distanceTo(this.gatePos()) < 60) this.gate.hp -= 25 * s.soldiers.filter(x => x.alive).length * dt;
   }
-  launchShell(from, to, dur, onHit) {
-    const m = new THREE.Mesh(new THREE.SphereGeometry(0.35, 6, 4), new THREE.MeshBasicMaterial({ color: 0x222222 }));
+  launchShell(from, to, dur, onHit, o = {}) {
+    const m = o.rocket ? new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.9, 6).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x4a5636 }))
+      : new THREE.Mesh(new THREE.SphereGeometry(o.small ? 0.22 : 0.35, 6, 4), new THREE.MeshBasicMaterial({ color: 0x222222 }));
     this.scene.add(m);
-    this.boulders.push({ m, from, to, t: 0, dur, arc: from.distanceTo(to) * 0.2, onHit: () => {
-      for (let i = 0; i < 40; i++) this.particlesAdd.emit(to.x, to.y + 1, to.z, rand(-7, 7), rand(2, 10), rand(-7, 7), rand(0.4, 0.9), rand(2.5, 6), 1, rand(0.4, 0.75), 0.1, 1, 5, -3);
-      for (let i = 0; i < 14; i++) this.particlesN.emit(to.x, to.y + 2, to.z, rand(-3, 3), rand(2, 5), rand(-3, 3), rand(2, 4), rand(5, 9), 0.25, 0.23, 0.2, 0.5, -0.2, 3);
-      SFX.boom(0.5); onHit && onHit();
+    const big = o.big || 1;
+    this.boulders.push({ m, from, to, t: 0, dur, arc: from.distanceTo(to) * (o.arc ?? 0.2), trail: o.trail, noSpin: o.rocket, quiet: true, onHit: () => {
+      for (let i = 0; i < 40 * big; i++) this.particlesAdd.emit(to.x, to.y + 1, to.z, rand(-7, 7) * big, rand(2, 10) * big, rand(-7, 7) * big, rand(0.4, 0.9), rand(2.5, 6) * big, 1, rand(0.4, 0.75), 0.1, 1, 5, -3);
+      for (let i = 0; i < 14 * big; i++) this.particlesN.emit(to.x, to.y + 2, to.z, rand(-3, 3), rand(2, 5), rand(-3, 3), rand(2, 4), rand(5, 9) * big, 0.25, 0.23, 0.2, 0.5, -0.2, 3);
+      SFX.boom(0.4 + 0.15 * big); onHit && onHit();
     } });
+  }
+  muzzle(x, y, z, smoke = 6) {
+    for (let i = 0; i < 6; i++) this.particlesAdd.emit(x, y, z, rand(-1, 1), rand(0, 1.5), rand(-1, 1), 0.12, rand(1.5, 2.8), 1, 0.85, 0.4, 1, 0, -4);
+    for (let i = 0; i < smoke; i++) this.particlesN.emit(x, y, z, rand(-1, 1), rand(0.5, 2), rand(-1, 1), rand(1, 2), rand(2, 4), 0.6, 0.6, 0.58, 0.45, -0.1, 2);
   }
 
   // ———————————————— 視覺 ————————————————
@@ -1625,11 +1698,12 @@ export class Battle {
       b.t += sdt;
       const u = Math.min(1, b.t / b.dur);
       b.m.position.lerpVectors(b.from, b.to, u); b.m.position.y += Math.sin(u * Math.PI) * b.arc * (b.from.y > b.to.y + 10 ? 0.15 : 1);
-      b.m.rotation.x += sdt * 5;
+      if (b.noSpin) { const u2 = Math.min(1, u + 0.02); tmpV.lerpVectors(b.from, b.to, u2); tmpV.y += Math.sin(u2 * Math.PI) * b.arc; b.m.lookAt(tmpV); } else b.m.rotation.x += sdt * 5;
+      if (b.trail && sdt > 0) this.particlesN.emit(b.m.position.x, b.m.position.y, b.m.position.z, rand(-0.3, 0.3), rand(0.2, 0.8), rand(-0.3, 0.3), rand(1, 1.8), rand(1.2, 2.2), 0.75, 0.74, 0.72, 0.55, -0.1, 2.2);
       if (u >= 1) {
         this.scene.remove(b.m);
         for (let i = 0; i < 18; i++) this.particlesN.emit(b.to.x, b.to.y + 1, b.to.z, rand(-5, 5), rand(2, 7), rand(-5, 5), rand(1.5, 3), rand(3, 6), 0.55, 0.5, 0.42, 0.7, 4, 2);
-        SFX.drum(0.5);
+        if (!b.quiet) SFX.drum(0.5);
         b.onHit && b.onHit();
         return false;
       }

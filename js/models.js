@@ -409,3 +409,32 @@ export function makeDrone() {
   g.scale.setScalar(2.2);
   return g;
 }
+
+// 迫擊砲陣地（砲管、底板、腳架、沙包）
+export function makeMortar() {
+  const g = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x3a4230, roughness: 0.6, metalness: 0.4 });
+  const sand = new THREE.MeshStandardMaterial({ color: 0x9a8a62, roughness: 0.95 });
+  const add = (geo, m, x, y, z, rx = 0, ry = 0, rz = 0, parent = g) => { const me = new THREE.Mesh(geo, m); me.position.set(x, y, z); me.rotation.set(rx, ry, rz); me.castShadow = true; parent.add(me); return me; };
+  for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; add(new THREE.BoxGeometry(1.1, 0.5, 0.6), sand, Math.cos(a) * 2.4, 0.25, Math.sin(a) * 2.4, 0, -a, 0); if (i % 2) add(new THREE.BoxGeometry(1.1, 0.45, 0.6), sand, Math.cos(a + 0.26) * 2.4, 0.7, Math.sin(a + 0.26) * 2.4, 0, -a - 0.26, 0); }
+  add(new THREE.CylinderGeometry(0.6, 0.6, 0.1, 12), metal, 0, 0.05, 0.3);
+  const tube = new THREE.Group(); tube.position.set(0, 0.1, 0.3); tube.rotation.x = -0.75; g.add(tube);
+  add(new THREE.CylinderGeometry(0.11, 0.13, 1.7, 10), metal, 0, 0.85, 0, 0, 0, 0, tube);
+  for (const sx of [-1, 1]) add(new THREE.CylinderGeometry(0.03, 0.03, 1.1, 5), metal, sx * 0.3, 0.5, -0.45, 0.35, 0, sx * 0.35);
+  for (let i = 0; i < 4; i++) add(new THREE.CylinderGeometry(0.07, 0.07, 0.4, 6), metal, 1.2, 0.2, -0.6 + i * 0.25);
+  g.userData.tube = tube;
+  return g;
+}
+// 塑膠炸藥（含閃爍指示燈）
+export function makeC4() {
+  const g = new THREE.Group();
+  const clay = new THREE.MeshStandardMaterial({ color: 0xd8d0b0, roughness: 0.9 });
+  const tape = new THREE.MeshStandardMaterial({ color: 0x222222 });
+  for (let i = 0; i < 3; i++) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.35, 0.25), clay); b.position.y = i * 0.37; g.add(b); }
+  const t = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.1, 0.27), tape); t.scale.x = 0.15; t.position.y = 0.37; g.add(t);
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.12), tape); box.position.set(0, 0.4, 0.18); g.add(box);
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff2020 })); led.position.set(0.1, 0.45, 0.26); g.add(led);
+  g.userData.led = led;
+  g.scale.setScalar(1.6);
+  return g;
+}
