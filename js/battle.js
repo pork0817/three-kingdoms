@@ -1847,7 +1847,10 @@ export class Battle {
     this.ordersEl = el('div', 'b-orders', '', this.hud); this.ordersEl.style.pointerEvents = 'auto';
     this.rightEl = el('div', 'b-right', '', this.hud); this.rightEl.style.pointerEvents = 'auto';
     const left = el('div', 'b-left', '', this.hud); left.style.pointerEvents = 'auto';
-    const sp = el('div', 'row', '', left);
+    const spBox = el('div', 'b-speed', '', this.hud); spBox.style.pointerEvents = 'auto';
+    const sp = el('div', 'row', '', spBox);
+    const cmd = el('button', 'btn small b-cmd', '⚑ 指揮', spBox);
+    cmd.onclick = () => { left.classList.toggle('open'); cmd.classList.toggle('active', left.classList.contains('open')); };
     const spBtns = [['⏸', 0], ['1×', 1], ['2×', 2], ['3×', 3]].map(([t, v]) => {
       const b = el('button', 'btn small' + (v === 1 ? ' active' : ''), t, sp);
       b.onclick = () => { this.setSpeed(v); };
@@ -2231,7 +2234,10 @@ export class Battle {
       const injured = this.injured || [];
       for (const r of rows) if (injured.includes(r.general)) r.general = '';
       const lost = this.capturedP || [];
-      this.camTo(new THREE.Vector3(70, 90, 170), new THREE.Vector3(0, 0, 20), 1500);
+      const ph = document.body.classList.contains('phone');
+      if (ph && innerHeight > innerWidth) this.camTo(new THREE.Vector3(0, 150, 250), new THREE.Vector3(0, 0, 0), 1500);
+      else if (ph) this.camTo(new THREE.Vector3(-40, 80, 150), new THREE.Vector3(-30, 0, 30), 1500);
+      else this.camTo(new THREE.Vector3(70, 90, 170), new THREE.Vector3(0, 0, 20), 1500);
       const panel = el('div', 'panel deploy', '', root());
       const draw = () => {
         const used = rows.reduce((a, r) => a + r.troops, 0);
@@ -2261,10 +2267,12 @@ export class Battle {
           ${rows.length < 6 ? '<button class="btn small add">＋ 增加部隊</button>' : ''}
           <div class="sum"><span>已編入：<b style="color:${used > avail ? '#ff8a7a' : '#fff'}">${fmt(used)}</b> / 可用 ${fmt(avail)}</span><span>剩餘預備 ${fmt(Math.max(0, st.troops - used))}</span></div>
           ${this.adviceHTML(allowAmbush)}
+          <details class="dep-more" ${document.body.classList.contains('phone') ? '' : 'open'}><summary>兵法與兵器（${st.tactics.length + st.weapons.length + 1}）</summary>
           <div class="sec-title">本戰可用兵法（戰鬥中點右側按鈕施放）</div>
           <div class="tactic-list">${st.tactics.map(t => `<span class="tac-ic">${TACTICS[t].icon}</span>【${TACTICS[t].name}】${TACTICS[t].desc}${this.tacticUsable(t) ? '' : ' <span class="adv-no">（本戰無法使用）</span>'}`).join('<br>')}</div>
           <div class="sec-title">兵器（自動生效）</div>
           <div class="tactic-list">【雲梯】基本軍備${st.weapons.length ? '<br>' + st.weapons.map(w => `【${WEAPONS[w].name}】${WEAPONS[w].desc}`).join('<br>') : ''}</div>
+          </details>
           <div class="modal-btns"><button class="btn primary go" ${used > avail || used <= 0 ? 'disabled' : ''}>擂鼓開戰</button></div>`;
         panel.querySelectorAll('.fbtn').forEach(b => b.onclick = () => { this.sides.p.formation = b.dataset.f; this.applyPlayerRows(rows); draw(); });
         panel.querySelectorAll('.sq-row').forEach(rowEl => {
@@ -2332,7 +2340,9 @@ export class Battle {
     }
     if (/伏兵/.test(txt) && !seen.has('伏兵')) rows.push(allowAmbush ? '<div class="adv-row ok">✔ 本戰可以設伏：在部隊列勾選「設為伏兵」</div>' : '<div class="adv-row no">✘ 本戰無法設伏</div>');
     const missing = rows.some(r => r.includes('adv-row no') && r.includes('市集'));
-    return `<div class="advice"><div class="sec-title">軍師建言</div><div class="adv-txt">${txt}</div>${rows.join('')}${missing && this.app.openShop ? `<button class="btn small open-shop">前往市集購買（持有 ${fmt(st.gold)} 金）</button>` : ''}</div>`;
+    const phone = document.body.classList.contains('phone');
+    const bad = rows.filter(r => r.includes('adv-row no')).length;
+    return `<details class="advice" ${phone && !bad ? '' : 'open'}><summary class="sec-title">軍師建言${bad ? `（${bad} 項未具備）` : ''}</summary><div class="adv-txt">${txt}</div>${rows.join('')}${missing && this.app.openShop ? `<button class="btn small open-shop">前往市集購買（持有 ${fmt(st.gold)} 金）</button>` : ''}</details>`;
   }
 
   async fight() {

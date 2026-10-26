@@ -464,7 +464,12 @@ export class WorldMap {
       this.camera.lookAt(this.controls.target);
     });
   }
-  overview(ms = 1500) { return this.flyTo(new THREE.Vector3(0, 0, 6), 215, ms); }
+  overview(ms = 1500) {
+    // 直式螢幕視野較窄：拉遠鏡頭以看見整個天下
+    const a = this.camera.aspect, k = a < 1 ? Math.min(1.9, 1 / Math.pow(a, 0.75)) : 1;
+    this.controls.maxDistance = 280 * k;
+    return this.flyTo(new THREE.Vector3(0, 0, 6), 215 * k, ms);
+  }
 
   // 行軍動畫
   async march(from, to, f, ms = 2600) {

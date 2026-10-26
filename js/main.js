@@ -22,6 +22,16 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 
+// 手機版面：觸控且短邊小於 600px（以 iPhone 15 Pro 393×852 為基準）
+const PHONE = () => { const s = Math.min(innerWidth, innerHeight), l = Math.max(innerWidth, innerHeight); return (SETTINGS.mobile && s < 600) || (s < 500 && l < 1000); };
+function applyLayoutClass() {
+  document.body.classList.toggle('phone', PHONE());
+  document.body.classList.toggle('touch', !!SETTINGS.mobile);
+  document.body.classList.toggle('portrait', innerHeight > innerWidth);
+  document.body.classList.toggle('landscape', innerHeight <= innerWidth);
+}
+applyLayoutClass();
+
 const state = new GameState();
 const app = { renderer, state, view: null, setView(v) { this.view = v; }, openShop: (t, cb) => shopModal(t, cb) };
 let map, stage;
@@ -40,6 +50,9 @@ function loop() {
   if (app.view) { app.view.update(dt); app.view.render(renderer); }
 }
 addEventListener('resize', () => {
+  const was = document.body.classList.contains('phone');
+  applyLayoutClass();
+  if (was !== PHONE() && hud && hud.top?.isConnected) buildHUD();
   renderer.setSize(innerWidth, innerHeight);
   map?.resize(innerWidth, innerHeight);
   stage?.resize(innerWidth, innerHeight);
@@ -187,6 +200,7 @@ function startMap() {
 function buildHUD() {
   hud?.top?.remove(); hud?.right?.remove(); hud?.bl?.remove(); hud?.toggle?.remove();
   hud = {};
+  if (PHONE()) return buildPhoneHUD();
   hud.top = el('div', 'hud-top', '', root());
   hud.right = el('div', 'hud-right', '', root());
   hud.story = el('div', 'panel story-btn', '', hud.right);
@@ -210,8 +224,43 @@ function buildHUD() {
   updateHUD();
   updateCityPanel(map.selected);
 }
+// 手機：上方精簡資訊列、下方工具列、點城池才出現的小卡片
+function buildPhoneHUD() {
+  hud.phone = true;
+  hud.top = el('div', 'hud-top', '', root());
+  hud.right = el('div', 'm-hud', '', root());
+  hud.story = el('div', 'm-chap', '', hud.right);
+  hud.city = el('div', 'm-city', '', hud.right);
+  hud.actions = el('div', 'm-dock', '', hud.right);
+  hud.bl = el('div', 'hidden-el', '', root()); hud.toggle = el('div', 'hidden-el', '', root());
+  const dock = [['營', '軍營', campModal], ['交', '外交', diplomacyModal], ['市', '市集', () => shopModal()], ['季', '下一季', () => endSeason()], ['⋯', '更多', () => moreMenu()]];
+  for (const [ic, name, fn] of dock) { const b = el('button', 'm-btn', `<span class="m-ic">${ic}</span><span>${name}</span>`, hud.actions); b.onclick = fn; }
+  updateHUD();
+  updateCityPanel(map.selected);
+}
+function moreMenu() {
+  const items = [['存檔', () => { state.save(); toast('已存檔', 'good'); }], ['設定', settingsModal], ['說明', helpModal],
+    [SFX.isMuted() ? '開啟聲音' : '靜音', () => SFX.setMuted(!SFX.isMuted())],
+    ['回到標題', async () => { if (await modal('<p>回到標題畫面？（未存檔的進度將會遺失）</p>', [{ text: '確定', primary: true, value: 1 }, { text: '取消', value: 0 }])) { hud = null; titleScreen(); } }]];
+  modal(`<div class="m-more">${items.map((x, i) => `<button class="btn" data-i="${i}">${x[0]}</button>`).join('')}</div>`, [{ text: '關閉' }], 'm-more-modal');
+  document.querySelectorAll('.m-more [data-i]').forEach(b => b.onclick = () => { document.querySelector('.m-more-modal')?.parentElement.remove(); items[+b.dataset.i][1](); });
+}
+
 function updateHUD() {
   if (!hud || !state.faction || !hud.top.isConnected) return;
+  if (hud.phone) {
+    const F = state.F;
+    hud.top.style.setProperty('--fc', F.css);
+    hud.top.innerHTML = `<div class="emblem">${F.name}</div><div class="item"><b>${state.year}${SEASONS[state.season]}</b></div>
+      <div class="item"><span class="k">金</span><b>${fmt(state.gold)}</b></div><div class="item"><span class="k">糧</span><b style="color:${state.food < state.troops * 0.15 ? '#ff8a7a' : ''}">${fmt(state.food)}</b></div>
+      <div class="item"><span class="k">兵</span><b>${fmt(state.troops)}</b></div><div class="item"><span class="k">城</span><b>${state.myCities().length}</b></div>`;
+    const nx = nextChapter(state);
+    hud.story.innerHTML = nx ? `<button class="btn primary m-play">▶ 劇情：${nx.ch.title}</button>` : '';
+    hud.story.querySelector('.m-play')?.addEventListener('click', playChapter);
+    map.refreshCityColors();
+    updateCityPanel(map.selected);
+    return;
+  }
   const F = state.F;
   hud.top.style.setProperty('--fc', F.css);
   hud.top.innerHTML = `<div class="emblem">${F.name}</div><div class="item fname">${F.full}</div>
@@ -235,6 +284,7 @@ function devCost(lv) { return 300 + lv * 250; }
 function updateCityPanel(id) {
   if (!hud || !hud.city.isConnected) return;
   const p = hud.city;
+  if (hud.phone) return updatePhoneCity(id);
   if (!id) { p.innerHTML = '<h3>城池</h3><div class="hint-txt">點選地圖上的城池查看詳情。<br>自己的城池可以開發內政；虛線框帶 ⚔ 者可以攻打。</div>'; return; }
   const c = CITIES[id], owner = state.owners[id], F = FACTIONS[owner];
   const mine = owner === state.faction;
@@ -264,6 +314,33 @@ function updateCityPanel(id) {
   p.innerHTML = html;
   if (mine) p.querySelectorAll('[data-a]').forEach(b => b.onclick = () => cityAction(id, b.dataset.a));
   if (state.canAttack(id)) { const b = el('button', 'btn primary', '⚔ 出兵攻打', p); b.onclick = () => attackCity(id); }
+}
+function updatePhoneCity(id) {
+  const p = hud.city;
+  p.classList.toggle('show', !!id);
+  if (!id) { p.innerHTML = ''; return; }
+  const c = CITIES[id], owner = state.owners[id], F = FACTIONS[owner], mine = owner === state.faction;
+  let html = `<div class="mc-head"><b>${c.name}</b><span class="owner" style="--fc:${F.css}">${F.full}</span><span class="mc-sz">${['', '小城', '大城', '都城'][c.size]}</span><button class="mc-x">✕</button></div>`;
+  if (mine) {
+    const d = state.dev[id], acted = state.acted[id] === state.stamp();
+    html += `<div class="mc-info">農${d.agri}・商${d.comm}・城${d.wall}　太守：${state.gov[id] ? gname(state.gov[id]) : '無'}${acted ? '　<span class="adv-no">本季已下令</span>' : ''}</div>
+      <div class="mc-btns">
+        <button class="btn small" data-a="agri" ${d.agri >= 5 || acted ? 'disabled' : ''}>開墾<small>${devCost(d.agri)}</small></button>
+        <button class="btn small" data-a="comm" ${d.comm >= 5 || acted ? 'disabled' : ''}>興商<small>${devCost(d.comm)}</small></button>
+        <button class="btn small" data-a="wall" ${d.wall >= 5 || acted ? 'disabled' : ''}>築城<small>${devCost(d.wall)}</small></button>
+        <button class="btn small" data-a="levy" ${acted ? 'disabled' : ''}>徵兵<small>800</small></button>
+        <button class="btn small" data-a="search" ${acted ? 'disabled' : ''}>搜才</button>
+        <button class="btn small" data-a="gov">太守</button>
+      </div>`;
+  } else {
+    const gens = (state.cityGenerals()[id] || []).map(gname).join('、');
+    html += `<div class="mc-info">守軍約 ${fmt(state.garrison[id])}${state.siege[id] ? `（被圍${state.siege[id]}季）` : ''}${gens ? `　守將：${gens}` : ''}${FACTIONS[owner].major ? `　${relText(state.getRel(state.faction, owner))}` : ''}</div>`;
+    if (state.canAttack(id)) html += `<div class="mc-btns one"><button class="btn primary mc-atk">⚔ 出兵攻打</button></div>`;
+  }
+  p.innerHTML = html;
+  p.querySelector('.mc-x').onclick = () => map.select(null);
+  if (mine) p.querySelectorAll('[data-a]').forEach(b => b.onclick = () => cityAction(id, b.dataset.a));
+  p.querySelector('.mc-atk')?.addEventListener('click', () => attackCity(id));
 }
 function relText(v) { return v >= 60 ? `親密 ${v}` : v >= 20 ? `友好 ${v}` : v > -20 ? `普通 ${v}` : v > -60 ? `敵視 ${v}` : `仇恨 ${v}`; }
 

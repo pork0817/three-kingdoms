@@ -86,6 +86,7 @@ export function say(speaker, text) {
 
 // —— 選擇 ——
 export function choose(prompt, options) {
+  if (document.body.classList.contains('phone')) hideDialog();
   return new Promise(resolve => {
     const wrap = el('div', 'choice-wrap', '', root());
     if (prompt) el('div', 'choice-prompt', prompt, wrap);

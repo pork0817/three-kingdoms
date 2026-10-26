@@ -205,15 +205,18 @@ export class Stage {
     const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
     const right = new THREE.Vector3(fwd.z, 0, -fwd.x);
     const h = a.obj.userData.lying ? 0.9 : (a.obj.position.y + 1.62);
-    const to = p.clone().addScaledVector(fwd, 3.2).addScaledVector(right, this.side * 1.3); to.y = h + 0.25;
-    const look = new THREE.Vector3(p.x, h, p.z);
+    // 直式螢幕畫面較窄，鏡頭拉遠一些，人物才不會被裁切
+    const k = this.camera.aspect < 1 ? 1 / Math.max(0.5, this.camera.aspect * 1.2) : 1;
+    const to = p.clone().addScaledVector(fwd, 3.2 * k).addScaledVector(right, this.side * 1.3 * Math.min(k, 1.3)); to.y = h + 0.25 + (k - 1) * 0.35;
+    const look = new THREE.Vector3(p.x, h - (k - 1) * 0.25, p.z);
     return this.camTo(to, look, ms);
   }
   wide(ms = 900) {
     let c = new THREE.Vector3(), n = 0;
     for (const a of this.actors.values()) { c.add(a.obj.position); n++; }
     if (n) c.multiplyScalar(1 / n); else c.set(0, 0, 2);
-    const to = new THREE.Vector3(c.x + 3, 4.2, c.z - 10);
+    const k = this.camera.aspect < 1 ? 1 / Math.max(0.5, this.camera.aspect * 1.2) : 1;
+    const to = new THREE.Vector3(c.x + 3, 4.2 + (k - 1) * 2, c.z - 10 * k);
     return this.camTo(to, new THREE.Vector3(c.x, 1.4, c.z), ms);
   }
   camTo(pos, look, ms) {
