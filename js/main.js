@@ -1,10 +1,10 @@
 // 主程式：畫面流程、地圖介面、劇情執行、內政外交、天下征戰
 import * as THREE from 'three';
 import { WorldMap, heightAtXZ, toXZ } from './worldmap.js';
-import { Battle, showResults } from './battle.js';
+import { Battle, showResults, autoBattle } from './battle.js';
 import { GameState, DIFF } from './state.js';
 import { STORY, nextChapter } from './story.js';
-import { FACTIONS, GENERALS, CITIES, TACTICS, WEAPONS, SEASONS, neighbors, gname } from './data.js';
+import { FACTIONS, GENERALS, CITIES, TACTICS, WEAPONS, SEASONS, MODERN, RARITY, neighbors, gname, factionAt } from './data.js';
 import { el, root, say, choose, modal, toast, titleCard, learnCard, noteCard, hideDialog, portrait, clearUI, DLG } from './ui.js';
 import { fmt, sleep, pick, rand, clamp } from './util.js';
 import * as SFX from './audio.js';
@@ -161,8 +161,11 @@ function settingsModal() {
 
 function factionSelect() {
   const w = el('div', 'faction-select', `<div class="fs-title">選擇你的陣營</div><div class="fs-cards"></div>
-    <div class="fs-diff">難度：${Object.entries(DIFF).map(([k, d]) => `<button class="btn small ${k === 'normal' ? 'active' : ''}" data-d="${k}">${d.name}</button>`).join('')}</div>`, root());
-  let diff = 'normal';
+    <div class="fs-diff">難度：${Object.entries(DIFF).map(([k, d]) => `<button class="btn small ${k === 'normal' ? 'active' : ''}" data-d="${k}">${d.name}</button>`).join('')}
+    <button class="btn small fs-tt" title="自帶「穿越系統」：轉轉盤獲得現代武器與裝備">⚡ 穿越模式：關</button></div>`, root());
+  let diff = 'normal', tt = false;
+  const ttb = w.querySelector('.fs-tt');
+  ttb.onclick = () => { tt = !tt; ttb.classList.toggle('active', tt); ttb.textContent = `⚡ 穿越模式：${tt ? '開' : '關'}`; };
   w.querySelectorAll('[data-d]').forEach(b => b.onclick = () => { diff = b.dataset.d; w.querySelectorAll('[data-d]').forEach(x => x.classList.toggle('active', x === b)); });
   const cards = w.querySelector('.fs-cards');
   for (const f of ['wei', 'shu', 'wu']) {
@@ -174,11 +177,16 @@ function factionSelect() {
     c.onclick = async () => {
       SFX.drumRoll(4, 0.25);
       w.remove();
-      state.newGame(f, diff);
+      state.newGame(f, diff, tt);
       titleOrbit = false;
       map.recolor(); map.refreshCityColors();
       startMap();
       await sleep(300);
+      if (tt) {
+        await modal(`<h2>⚡ 穿越系統啟動</h2><p>一陣白光過後，你睜開雙眼——竟已身在東漢末年的${F.full}軍中。</p>
+          <p>腦中響起冰冷的聲音：「<b>穿越系統</b>綁定成功。宿主每季可獲得一次轉盤機會，戰勝亦可獲得；轉盤可抽出現代武器與裝備。新手禮包：轉盤 ×3。」</p>
+          <p class="hint-txt">地圖介面的「系統」按鈕可隨時開啟轉盤。</p>`, [{ text: '開啟系統', primary: true, value: 1 }, { text: '稍後再說', value: 0 }]) && await systemModal();
+      }
       playChapter();
     };
   }
@@ -214,6 +222,7 @@ function buildHUD() {
   el('button', 'btn', '軍營', r1).onclick = campModal;
   el('button', 'btn', '外交', r1).onclick = diplomacyModal;
   el('button', 'btn', '市集', r1).onclick = () => shopModal();
+  if (state.timeTravel) el('button', 'btn tt-btn', '⚡ 系統', r1).onclick = () => systemModal();
   el('button', 'btn', '結束本季', hud.actions).onclick = () => endSeason();
   const row = el('div', 'btn-row', '', hud.actions);
   el('button', 'btn small', '存檔', row).onclick = () => { state.save(); toast('已存檔', 'good'); };
@@ -234,6 +243,7 @@ function buildPhoneHUD() {
   hud.actions = el('div', 'm-dock', '', hud.right);
   hud.bl = el('div', 'hidden-el', '', root()); hud.toggle = el('div', 'hidden-el', '', root());
   const dock = [['營', '軍營', campModal], ['交', '外交', diplomacyModal], ['市', '市集', () => shopModal()], ['季', '下一季', () => endSeason()], ['⋯', '更多', () => moreMenu()]];
+  if (state.timeTravel) dock.splice(3, 0, ['⚡', '系統', () => systemModal()]);
   for (const [ic, name, fn] of dock) { const b = el('button', 'm-btn', `<span class="m-ic">${ic}</span><span>${name}</span>`, hud.actions); b.onclick = fn; }
   updateHUD();
   updateCityPanel(map.selected);
@@ -389,12 +399,96 @@ function campModal() {
     <div class="sec-title">兵器（${state.weapons.length}）</div><div class="chips">${Object.entries(WEAPONS).map(([k, w]) => `<span class="chip ${state.hasWeapon(k) ? '' : 'off'}" title="${w.desc}">${w.name}</span>`).join('')}</div>
     <div class="sec-title">武將（${gens.length}）　點擊查看 3D 模型；忠誠低於 30 可能叛逃</div>
     <div class="roster">${gens.map(g => { const G = GENERALS[g]; const loy = Math.round(state.loy[g] ?? 70); return `<div class="gcard" data-g="${g}">${portrait(g, 52)}<div style="flex:1"><div class="gn">${G.name} <small>${state.year - G.life[0]}歲</small></div><div class="st">武${G.war} 統${G.lead} 智${G.int}</div><div class="st">忠誠 <b style="color:${loy < 40 ? '#ff8a7a' : '#cfe'}">${G.ruler ? '—' : loy}</b>${G.ruler ? '' : ` <button class="btn small gift" data-g="${g}">賞賜</button>`}</div></div></div>`; }).join('')}</div>
-    ${state.prisoners.length ? `<div class="sec-title">獄中俘虜</div><div class="chips">${state.prisoners.map(g => `<span class="chip">${gname(g)}</span>`).join('')}</div>` : ''}`,
+    ${state.prisoners.length ? `<div class="sec-title">獄中俘虜（${state.prisoners.length}）　每季可勸降一次</div><div class="prison">${state.prisoners.filter(g => GENERALS[g]).map(g => { const G = GENERALS[g], f = factionAt(g, state.year), alive = f && FACTIONS[f] && state.alive(f) && f !== state.faction, tried = state.flags['pers_' + g] === state.stamp(); return `<div class="pcard" data-g="${g}">${portrait(g, 40)}<div class="pinfo"><b>${G.name}</b> <small>${alive ? FACTIONS[f].name : '無主'}・武${G.war} 智${G.int}</small></div>
+      <div class="pbtns"><button class="btn small" data-a="pers" ${tried ? 'disabled' : ''}>${tried ? '已勸' : '勸降'}</button><button class="btn small" data-a="free">釋放</button>${alive ? `<button class="btn small" data-a="ransom">贖金${ransomOf(g)}</button>` : ''}<button class="btn small danger" data-a="kill">斬首</button></div></div>`; }).join('')}</div>` : ''}`,
     [{ text: '關閉', primary: true }]);
   const tr = document.querySelector('.modal .train');
   if (tr) tr.onclick = () => { const c = 800 * (state.training + 1); if (state.gold < c) return toast('金錢不足', 'bad'); state.gold -= c; state.training++; toast(`訓練等級提升至 ${state.training}`, 'good'); document.querySelector('.modal-bg').remove(); campModal(); updateHUD(); };
   document.querySelectorAll('.roster .gift').forEach(b => b.onclick = (e) => { e.stopPropagation(); if (state.gold < 300) return toast('金錢不足', 'bad'); state.gold -= 300; state.addLoyalty(b.dataset.g, 15); toast(`賞賜${gname(b.dataset.g)}，忠誠 +15`, 'good'); document.querySelector('.modal-bg').remove(); campModal(); updateHUD(); });
   document.querySelectorAll('.roster .gcard').forEach(c => { c.style.cursor = 'pointer'; c.onclick = () => heroViewer(c.dataset.g); });
+  document.querySelectorAll('.prison [data-a]').forEach(b => b.onclick = async () => {
+    const g = b.closest('.pcard').dataset.g;
+    document.querySelector('.modal-bg').remove();
+    await prisonerAction(g, b.dataset.a);
+    updateHUD(); state.save(); campModal();
+  });
+}
+const ransomOf = (g) => { const G = GENERALS[g]; return Math.round((400 + (G.war + G.lead + G.int) * 6) / 100) * 100; };
+async function prisonerAction(g, a) {
+  const G = GENERALS[g], f = factionAt(g, state.year);
+  if (a === 'pers') {
+    state.flags['pers_' + g] = state.stamp();
+    const held = state.flags['held_' + g] ? state.stamp() - state.flags['held_' + g] : 0;
+    const ch = G.ruler ? 0 : G.loyal ? 0.04 + held * 0.01 : clamp(0.22 + (state.renown - 50) / 150 + (90 - G.int) / 300 + held * 0.06 + (f && !state.alive(f) ? 0.25 : 0), 0.08, 0.9);
+    if (Math.random() < ch) { await say(g, pick(['久困囹圄，深感明公仁德，願降！', '良禽擇木而棲，某願歸順。', '敗軍之將，承蒙不棄，願效犬馬之勞！'])); hideDialog(); state.recruit(g, 45); toast(`${G.name}歸降！`, 'good'); }
+    else { await say(g, pick(['休要多言！', '吾寧死不降！', '……（閉目不語）'])); hideDialog(); toast(`${G.name}拒絕歸降，下季可再勸`, 'bad'); }
+  } else if (a === 'free') {
+    state.prisoners = state.prisoners.filter(x => x !== g); state.renown += 3;
+    if (f && FACTIONS[f]?.major && f !== state.faction) state.addRel(state.faction, f, 8);
+    toast(`釋放${G.name}，名望 +3${f && FACTIONS[f]?.major ? '、關係改善' : ''}`, 'good');
+  } else if (a === 'ransom') {
+    const n = ransomOf(g);
+    state.prisoners = state.prisoners.filter(x => x !== g); state.gold += n;
+    toast(`${FACTIONS[f].full}以 ${n} 金贖回${G.name}`, 'gold');
+  } else if (a === 'kill') {
+    if (!await modal(`<p>確定斬首<b>${G.name}</b>？（名望 -5，同鄉將領忠誠下降）</p>`, [{ text: '斬首', danger: true, value: 1 }, { text: '取消', value: 0 }])) return;
+    state.kill(g); state.renown -= 5; for (const x of state.generals) if (GENERALS[x]?.f === G.f) state.addLoyalty(x, -6);
+    toast(`${G.name}被斬首`, 'bad');
+  }
+}
+
+// —— 穿越系統：轉盤 ——
+const WHEEL = Object.keys(MODERN);
+function drawModern() {
+  let r = Math.random() * Object.values(RARITY).reduce((a, x) => a + x.weight, 0), rar = 'N';
+  for (const [k, x] of Object.entries(RARITY)) { if ((r -= x.weight) < 0) { rar = k; break; } }
+  return pick(WHEEL.filter(k => MODERN[k].r === rar));
+}
+function grantModern(k) {
+  const M = MODERN[k];
+  if (k === 'ration') { state.food += 30000; return '糧草 +30000'; }
+  if (k === 'gold') { state.gold += 3000; return '金 +3000'; }
+  if (k === 'tank') { state.tanks = (state.tanks || 0) + 1; if (!state.modern.includes('tank')) state.modern.push('tank'); return `坦克 ×${state.tanks}（每輛編成 500 人的坦克部隊，出陣時自動編入）`; }
+  if (state.modern.includes(k)) { const n = { N: 600, R: 1200, SR: 2000 }[M.r] || 2000; state.gold += n; return `重複獲得，系統兌換為 ${n} 金`; }
+  state.modern.push(k); return M.desc;
+}
+async function systemModal() {
+  state.modern ||= []; state.spins ||= 0;
+  const seg = 360 / WHEEL.length;
+  const grad = WHEEL.map((k, i) => `${RARITY[MODERN[k].r].color}${i % 2 ? 'cc' : 'ff'} ${i * seg}deg ${(i + 1) * seg}deg`).join(',');
+  const bg = el('div', 'modal-bg', '', root());
+  const m = el('div', 'modal tt-modal', '', bg);
+  let rot = 0, busy = false;
+  const draw = (msg = '') => {
+    m.innerHTML = `<h2>⚡ 穿越系統</h2>
+      <div class="tt-wrap"><div class="tt-ptr">▼</div><div class="tt-wheel" style="background:conic-gradient(${grad});transform:rotate(${rot}deg)">
+        ${WHEEL.map((k, i) => `<span style="transform:rotate(${(i + 0.5) * seg}deg)"><i>${MODERN[k].icon}</i></span>`).join('')}<b class="tt-hub">轉</b></div></div>
+      <div class="tt-msg">${msg || `剩餘轉盤次數 <b>${state.spins}</b>　金 ${fmt(state.gold)}`}</div>
+      <div class="tt-rar">${Object.entries(RARITY).map(([k, r]) => `<span style="color:${r.color}">■ ${r.name} ${r.weight}%</span>`).join('')}</div>
+      <div class="sec-title">已持有裝備${state.modern.length ? '' : '（尚無）'}</div>
+      <div class="chips">${WHEEL.filter(k => !MODERN[k].instant).map(k => { const own = state.modern.includes(k); return `<span class="chip ${own ? '' : 'off'}" style="${own ? `border-color:${RARITY[MODERN[k].r].color}` : ''}" title="${MODERN[k].desc}">${MODERN[k].name}${k === 'tank' && state.tanks ? '×' + state.tanks : ''}</span>`; }).join('')}</div>
+      <p class="hint-txt">每季 +1 次、每場勝仗 +1 次。裝備效果只對我軍生效；點住裝備可看說明。</p>
+      <div class="modal-btns"><button class="btn primary spin" ${state.spins > 0 ? '' : 'disabled'}>轉動（${state.spins}）</button><button class="btn buy">購買一次 2000金</button><button class="btn close">關閉</button></div>`;
+    m.querySelector('.close').onclick = () => { if (!busy) { bg.remove(); updateHUD(); state.save(); done(); } };
+    m.querySelector('.buy').onclick = () => { if (busy) return; if (state.gold < 2000) return toast('金錢不足', 'bad'); state.gold -= 2000; state.spins++; draw(); };
+    m.querySelector('.spin').onclick = async () => {
+      if (busy || state.spins <= 0) return;
+      busy = true; state.spins--;
+      const k = drawModern(), i = WHEEL.indexOf(k);
+      rot += 360 * 5 + (360 - ((i + 0.5) * seg + rot % 360) % 360) + rand(-seg * 0.3, seg * 0.3);
+      const w = m.querySelector('.tt-wheel'); w.style.transition = 'transform 3.6s cubic-bezier(.15,.85,.2,1)'; w.style.transform = `rotate(${rot}deg)`;
+      SFX.drumRoll(10, 0.3);
+      await sleep(3700);
+      const M = MODERN[k], R = RARITY[M.r], got = grantModern(k);
+      M.r === 'SSR' || M.r === 'SR' ? SFX.horn?.() : SFX.drum(0.6);
+      busy = false;
+      draw(`<span class="tt-get" style="color:${R.color}">【${R.name}】${M.name}</span><br><small>${got}</small>`);
+      state.save(); updateHUD();
+    };
+  };
+  let done; const p = new Promise(r => done = r);
+  draw();
+  return p;
 }
 
 // —— 市集：兵書、兵器、物資 ——
@@ -546,10 +640,26 @@ async function fade(on) {
   await sleep(650);
 }
 function showHUD(on) { if (hud && hud.top.isConnected) for (const k of ['top', 'right', 'bl', 'toggle']) hud[k].style.display = on ? '' : 'none'; }
-async function doBattle(cfg) {
+async function doBattle(cfg, auto = false) {
   if (state.troops < 1000) {
     await modal('<h2>兵力不足</h2><p>可用兵力不足一千，只得緊急徵召鄉勇五千人。</p>');
     state.troops += 5000;
+  }
+  if (auto) {
+    const wait = el('div', 'modal-bg', `<div class="modal"><h2>${cfg.name}</h2><p style="text-align:center">將領領兵出戰，等候戰報……</p></div>`, root());
+    SFX.drumRoll(6, 0.25);
+    await sleep(500);
+    let res;
+    try { res = autoBattle(app, state, cfg); }
+    catch (e) { console.error(e); res = { result: 'lose', pLost: 0, eLost: 0, captives: 0, gold: 0, capturedGenerals: [], lostGenerals: [], participants: [] }; }
+    await sleep(400);
+    wait.remove();
+    res.msg = (res.msg ? res.msg + '<br>' : '') + '（自動作戰）';
+    await showResults(state, res, cfg);
+    if (res.result === 'win' && state.timeTravel) { state.spins = (state.spins || 0) + 1; toast('穿越系統：勝利獎勵，轉盤 +1', 'gold'); }
+    if (FACTIONS[res.enemyFaction]?.major) state.addRel(state.faction, res.enemyFaction, -6);
+    updateHUD(); state.save();
+    return res;
   }
   cfg.runSteps = runSteps;
   await fade(true);
@@ -567,6 +677,7 @@ async function doBattle(cfg) {
   await sleep(600);
   SFX.music(res.result === 'win' ? 'story' : 'tense');
   await showResults(state, res, cfg);
+  if (res.result === 'win' && state.timeTravel) { state.spins = (state.spins || 0) + 1; toast('穿越系統：勝利獎勵，轉盤 +1', 'gold'); }
   if (FACTIONS[b.ef]?.major) state.addRel(state.faction, b.ef, -6);
   await fade(true);
   b.dispose();
@@ -749,13 +860,14 @@ async function attackCity(id) {
   const cost = Math.round(state.troops * 0.06);
   const opts = [
     { text: '擂鼓出征', primary: true, value: 'go' },
+    { text: '🤖 自動作戰', value: 'auto' },
     ...(c.size >= 2 ? [{ text: '野戰誘敵', value: 'field' }] : []),
     ...(state.hasTactic('raid') ? [{ text: '夜襲劫營', value: 'night' }] : []),
     { text: '圍城斷糧', value: 'siege' },
     { text: '暫緩', value: 0 },
   ];
   const k = await modal(`<h2>出兵　${c.name}</h2><p>目標：${FACTIONS[owner].full}・${c.name}（${['', '小城', '大城', '都城'][c.size]}）<br>守軍約 <b>${fmt(state.garrison[id])}</b>　我軍可用兵力 <b>${fmt(state.troops)}</b><br>軍糧消耗約 <b>${fmt(cost)}</b>（持有 ${fmt(state.food)}）</p>
-    <p class="hint-txt">出兵耗費一季。野戰誘敵：在城外野戰，獲勝可大幅削弱守軍。圍城：不戰而使守軍每季減少三成、士氣下降，久圍可能開城投降。</p>`, opts);
+    <p class="hint-txt">自動作戰：交由將領指揮，直接得出戰果（兵力懸殊時適用）。出兵耗費一季。野戰誘敵：在城外野戰，獲勝可大幅削弱守軍。圍城：不戰而使守軍每季減少三成、士氣下降，久圍可能開城投降。</p>`, opts);
   if (!k) return;
   if (state.food < cost) { toast('糧草不足以支撐出征！', 'bad'); return; }
   state.food -= cost;
@@ -770,7 +882,7 @@ async function attackCity(id) {
   playing = true; map.lock(true);
   if (hud) hud.right.style.visibility = 'hidden';
   await map.march(from, id, state.faction);
-  const res = await doBattle(campaignBattle(id, state.faction, owner, true, { field: k === 'field', night: k === 'night' }));
+  const res = await doBattle(campaignBattle(id, state.faction, owner, true, { field: k === 'field', night: k === 'night' }), k === 'auto');
   delete state.siege[id];
   if (res.result === 'win') {
     if (k === 'field') {
@@ -794,6 +906,10 @@ async function endSeason(fromBattle = false) {
   if (playing && !fromBattle) return;
   for (const c in state.siege) state.food -= 2000;
   state.advanceSeason();
+  for (const g of [...state.prisoners]) {
+    state.flags['held_' + g] ??= state.stamp();
+    if (Math.random() < 0.04) { state.prisoners = state.prisoners.filter(x => x !== g); toast(`${gname(g)}越獄逃走了！`, 'bad'); }
+  }
   updateHUD();
   await applyWorld();
   // 敵國行動（依關係、同盟、停戰、難度決定）
@@ -821,9 +937,9 @@ async function endSeason(fromBattle = false) {
     if (tOwner === state.faction) {
       playing = true; map.lock(true);
       await map.march(src, tgt, f);
-      const k = await modal(`<h2>急報！</h2><p>${FACTIONS[f].full}大軍來犯<b>${CITIES[tgt].name}</b>！（城牆等級 ${state.dev[tgt].wall}）</p>`, [{ text: '迎戰', primary: true, value: 1 }, { text: '棄城撤退', value: 0 }]);
+      const k = await modal(`<h2>急報！</h2><p>${FACTIONS[f].full}大軍來犯<b>${CITIES[tgt].name}</b>！（城牆等級 ${state.dev[tgt].wall}）</p>`, [{ text: '迎戰', primary: true, value: 1 }, { text: '🤖 自動防守', value: 2 }, { text: '棄城撤退', value: 0 }]);
       if (k) {
-        const res = await doBattle(campaignBattle(tgt, f, state.faction, false));
+        const res = await doBattle(campaignBattle(tgt, f, state.faction, false), k === 2);
         if (res.result === 'lose') { state.owners[tgt] = f; await map.changeOwner(tgt, f, true); }
       } else { state.owners[tgt] = f; await map.changeOwner(tgt, f, true); }
       playing = false; map.lock(false);

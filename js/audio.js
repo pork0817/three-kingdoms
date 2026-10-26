@@ -2,7 +2,7 @@
 import { SETTINGS } from './settings.js';
 let ctx = null, master = null, musicBus = null, limiter = null, muted = false;
 // 同一種音效的最短間隔（秒），避免大量重疊造成爆音
-const GAP = { drum: 0.09, clash: 0.06, whoosh: 0.12, fire: 0.6, horn: 1.5, thud: 0.15 };
+const GAP = { drum: 0.09, clash: 0.06, whoosh: 0.12, fire: 0.6, horn: 1.5, thud: 0.15, shot: 0.05, boom: 0.2 };
 const lastT = {};
 function allow(kind, when = 0) {
   const c = ctx; if (!c) return true;
@@ -151,4 +151,24 @@ export function music(mode) {
   const c = ac(); if (!c) return;
   nextT = c.currentTime + 0.1; step = 0;
   if (!musicTimer) musicTimer = setInterval(schedule, 200);
+}
+
+// 穿越模式：槍聲、爆炸
+export function gunshot(vol = 0.18) {
+  const c = ac(); if (!c || muted || !allow('shot')) return;
+  const t = c.currentTime;
+  const s = c.createBufferSource(); s.buffer = noiseBuf(0.12);
+  const f = c.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 900;
+  const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t);
+}
+export function boom(vol = 0.6) {
+  const c = ac(); if (!c || muted || !allow('boom')) return;
+  const t = c.currentTime;
+  const s = c.createBufferSource(); s.buffer = noiseBuf(1.0);
+  const f = c.createBiquadFilter(); f.type = 'lowpass'; f.frequency.setValueAtTime(1200, t); f.frequency.exponentialRampToValueAtTime(120, t + 0.8);
+  const g = c.createGain(); g.gain.setValueAtTime(vol * 0.7, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t);
+  const o = c.createOscillator(), g2 = c.createGain(); o.frequency.setValueAtTime(60, t); o.frequency.exponentialRampToValueAtTime(30, t + 0.5);
+  g2.gain.setValueAtTime(vol * 0.5, t); g2.gain.exponentialRampToValueAtTime(0.001, t + 0.6); o.connect(g2); g2.connect(master); o.start(t); o.stop(t + 0.6);
 }

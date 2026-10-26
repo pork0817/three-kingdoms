@@ -29,7 +29,7 @@ export const relKey = (a, b) => [a, b].sort().join('|');
 export class GameState {
   constructor() { this.listeners = []; }
 
-  newGame(faction, difficulty = 'normal') {
+  newGame(faction, difficulty = 'normal', timeTravel = false) {
     const s = START[faction];
     Object.assign(this, {
       faction, difficulty, year: 208, season: 2, gold: s.gold, food: s.food, troops: s.troops, training: 0,
@@ -39,7 +39,7 @@ export class GameState {
       garrison: Object.fromEntries(Object.entries(CITIES).map(([id, c]) => [id, c.size * 9000 + 4000])),
       dev: Object.fromEntries(Object.keys(CITIES).map(id => [id, { agri: 1, comm: 1, wall: 1 }])),
       gov: {}, acted: {}, loy: {}, gfac: {}, rel: {}, ally: {}, truce: {}, siege: {}, seenCh: {},
-      log: [],
+      log: [], timeTravel, modern: [], tanks: 0, spins: timeTravel ? 3 : 0,
     });
     for (const g of this.generals) this.loy[g] = GENERALS[g].ruler ? 100 : 75;
     for (const [k, v] of Object.entries(REL0)) this.rel[k] = v;
@@ -75,6 +75,7 @@ export class GameState {
   }
   has(g) { return this.generals.includes(g); }
   hasTactic(t) { return this.tactics.includes(t); }
+  hasModern(m) { return !!this.timeTravel && (this.modern || []).includes(m); }
   hasWeapon(w) { return w === 'ladder' || this.weapons.includes(w); }
   getRel(a, b) { return this.rel[relKey(a, b)] ?? -10; }
   addRel(a, b, n) { const k = relKey(a, b); this.rel[k] = Math.max(-100, Math.min(100, (this.rel[k] ?? -10) + n)); }
@@ -199,6 +200,7 @@ export class GameState {
       this.troops -= lost; this.food = 0; this.renown -= 2;
       msg += `；糧草不足，士卒逃亡 ${lost}`;
     }
+    if (this.timeTravel) { this.spins = (this.spins || 0) + 1; msg += '；穿越系統：轉盤次數 +1'; }
     this.emit('toast', { text: msg, kind: this.food > 0 ? 'gold' : 'bad' });
     for (const c of Object.keys(this.garrison)) if (!this.owns(c)) {
       if (this.siege[c]) continue;

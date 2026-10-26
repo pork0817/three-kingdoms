@@ -491,3 +491,27 @@ body.phone .gcard .st { font-size: 10.5px; }
 body.phone .gcard .gift { padding: 0 4px; font-size: 10px; min-height: 18px; }
 body.phone .modal .sec-title { font-size: 12px; margin-top: 6px; }
 .btn-row .btn { white-space: nowrap; letter-spacing: 1px; padding-left: 6px; padding-right: 6px; }
+
+/* —— 俘虜處置 —— */
+.prison { display: flex; flex-direction: column; gap: 6px; }
+.pcard { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border: 1px solid rgba(216,180,106,.3); border-radius: 6px; background: rgba(0,0,0,.2); }
+.pcard .pinfo { flex: 1; min-width: 0; }
+.pcard .pinfo small { opacity: .75; }
+.pcard .pbtns { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+body.phone .pcard .btn.small { padding: 3px 6px; font-size: 11px; }
+
+/* —— 穿越系統 —— */
+.fs-tt.active, .tt-btn { border-color: #4ad0ff; color: #9fe6ff; box-shadow: 0 0 10px rgba(74,208,255,.35); }
+.tt-modal { text-align: center; }
+.tt-wrap { position: relative; width: 260px; height: 260px; margin: 6px auto 10px; }
+.tt-ptr { position: absolute; left: 50%; top: -14px; transform: translateX(-50%); color: #4ad0ff; font-size: 26px; z-index: 2; text-shadow: 0 0 8px #4ad0ff; }
+.tt-wheel { position: absolute; inset: 0; border-radius: 50%; border: 3px solid #4ad0ff; box-shadow: 0 0 24px rgba(74,208,255,.4), inset 0 0 30px rgba(0,0,0,.5); }
+.tt-wheel span { position: absolute; left: 50%; top: 0; height: 50%; width: 0; transform-origin: 50% 100%; }
+.tt-wheel span i { position: absolute; top: 12px; left: -10px; width: 20px; font-style: normal; font-weight: bold; color: #10161c; font-size: 15px; }
+.tt-hub { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: #0d1a24; border: 2px solid #4ad0ff; color: #9fe6ff; line-height: 50px; font-size: 18px; }
+.tt-msg { min-height: 40px; font-size: 15px; }
+.tt-get { font-size: 20px; font-weight: bold; text-shadow: 0 0 10px currentColor; }
+.tt-rar { display: flex; gap: 10px; justify-content: center; font-size: 12px; margin: 4px 0 6px; flex-wrap: wrap; }
+body.phone .tt-wrap { width: 200px; height: 200px; }
+body.phone .tt-wheel span i { top: 8px; font-size: 13px; }
+body.phone.landscape .tt-wrap { width: 150px; height: 150px; }

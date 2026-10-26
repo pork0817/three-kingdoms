@@ -265,14 +265,17 @@ export const UNIT_TYPES = {
   spear: { name: '槍兵', icon: '槍', atk: 0.95, def: 1.2, speed: 6.5, range: 3.5, color: '#9fb6c9' },
   cav: { name: '騎兵', icon: '騎', atk: 1.25, def: 0.95, speed: 14, range: 3, color: '#d68b5a' },
   archer: { name: '弓兵', icon: '弓', atk: 0.7, def: 0.7, speed: 6.5, range: 48, color: '#8fc08a' },
+  tank: { name: '坦克', icon: '戰', atk: 3.2, def: 4.5, speed: 10, range: 40, color: '#8a9a7a', modern: true },
 };
 // 相剋：COUNTER[攻][守]
 export const COUNTER = {
   inf: { inf: 1, spear: 1.3, cav: 0.9, archer: 1.25 },
   spear: { inf: 0.85, spear: 1, cav: 1.7, archer: 1.1 },
   cav: { inf: 1.1, spear: 0.6, cav: 1, archer: 1.7 },
-  archer: { inf: 1.2, spear: 1.1, cav: 0.85, archer: 1 },
+  archer: { inf: 1.2, spear: 1.1, cav: 0.85, archer: 1, tank: 0.3 },
+  tank: { inf: 1.6, spear: 1.6, cav: 1.8, archer: 1.8, tank: 1 },
 };
+for (const k of ['inf', 'spear', 'cav']) COUNTER[k].tank = 0.35;
 
 // 陣型：slots 為相對位置（x 橫向、z 縱深，負值朝敵），mods 為修正
 export const FORMATIONS = {
@@ -291,3 +294,27 @@ export const FORMATIONS = {
 };
 
 export const SEASONS = ['春', '夏', '秋', '冬'];
+
+// —— 穿越模式：現代裝備（轉盤獎勵） ——
+export const RARITY = {
+  N: { name: '普通', color: '#9aa4b0', weight: 52 },
+  R: { name: '稀有', color: '#4aa8ff', weight: 30 },
+  SR: { name: '史詩', color: '#c070ff', weight: 14 },
+  SSR: { name: '傳說', color: '#ffb020', weight: 4 },
+};
+export const MODERN = {
+  ration: { name: '軍用口糧', r: 'N', icon: '糧', desc: '立即獲得糧草 30000', instant: true },
+  gold: { name: '金條', r: 'N', icon: '金', desc: '立即獲得 3000 金', instant: true },
+  medkit: { name: '急救包', r: 'N', icon: '醫', desc: '戰鬥中未交戰的部隊會緩慢恢復兵力' },
+  radio: { name: '無線電', r: 'N', icon: '訊', desc: '指揮如臂使指：我軍兵法冷卻時間減半' },
+  vest: { name: '防彈衣', r: 'R', icon: '甲', desc: '我軍全體防禦 +50%' },
+  nvg: { name: '夜視鏡', r: 'R', icon: '視', desc: '夜戰、大霧中我軍視野不受限制' },
+  jeep: { name: '越野車', r: 'R', icon: '車', desc: '騎兵改乘越野車：速度 +50%' },
+  c4: { name: '塑膠炸藥', r: 'R', icon: '爆', desc: '攻城時工兵炸開城門（開戰約 15 秒後城門直接被炸毀）' },
+  rifle: { name: '自動步槍', r: 'SR', icon: '槍', desc: '弓兵改持步槍：攻擊 ×2.2、射程 +30%' },
+  mortar: { name: '迫擊砲', r: 'SR', icon: '砲', desc: '每隔數秒砲擊敵軍，傷亡與士氣打擊驚人' },
+  drone: { name: '偵察無人機', r: 'SR', icon: '機', desc: '空中偵察：看穿所有伏兵與迷霧，並對敵陣投彈' },
+  rpg: { name: '火箭筒', r: 'SR', icon: '箭', desc: '步兵、槍兵攻擊 +40%，對騎兵與城門傷害加倍' },
+  mg: { name: '重機槍', r: 'SSR', icon: '掃', desc: '弓兵火力再 ×1.8，萬箭齊發變成掃射' },
+  tank: { name: '主戰坦克', r: 'SSR', icon: '戰', desc: '每輛坦克可編成一支坦克部隊（重複獲得可增加數量）' },
+};

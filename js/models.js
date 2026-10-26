@@ -373,3 +373,39 @@ export function makeSiegeTower(h) {
   for (const [x, z] of [[-1.8, -1.8], [1.8, -1.8], [-1.8, 1.8], [1.8, 1.8]]) { const w = add(new THREE.CylinderGeometry(0.6, 0.6, 0.3, 10), wood, x, 0.6, z); w.rotation.z = Math.PI / 2; }
   return g;
 }
+
+// —— 穿越模式：坦克、無人機 ——
+export function makeTank(colorHex) {
+  const g = new THREE.Group();
+  const body = new THREE.MeshStandardMaterial({ color: 0x5a6646, roughness: 0.7, metalness: 0.3 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x23261f, roughness: 0.8, metalness: 0.4 });
+  const mark = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6 });
+  const add = (geo, m, x, y, z, rx = 0, ry = 0, rz = 0) => { const me = new THREE.Mesh(geo, m); me.position.set(x, y, z); me.rotation.set(rx, ry, rz); me.castShadow = true; g.add(me); return me; };
+  for (const sx of [-1, 1]) {
+    add(new THREE.BoxGeometry(0.9, 1.0, 6.4), dark, sx * 1.7, 0.6, 0);
+    for (let i = 0; i < 6; i++) add(new THREE.CylinderGeometry(0.42, 0.42, 0.95, 10), dark, sx * 1.7, 0.5, -2.5 + i, 0, 0, Math.PI / 2);
+  }
+  add(new THREE.BoxGeometry(3.0, 1.0, 6.0), body, 0, 1.25, 0);
+  add(new THREE.BoxGeometry(3.0, 0.5, 1.2), body, 0, 1.0, -3.1, -0.5);
+  const turret = new THREE.Group(); turret.position.set(0, 2.05, 0.4); g.add(turret);
+  const t1 = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 2.6), body); t1.castShadow = true; turret.add(t1);
+  const gun = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 4.6, 10), dark); gun.rotation.x = Math.PI / 2; gun.position.set(0, 0.05, -3.4); gun.castShadow = true; turret.add(gun);
+  const m1 = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.02, 0.6), mark); m1.position.set(0, 0.42, 0.3); turret.add(m1);
+  const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.2, 10), dark); hatch.position.set(0.5, 0.5, 0.6); turret.add(hatch);
+  g.userData.turret = turret; g.userData.gun = gun;
+  return g;
+}
+export function makeDrone() {
+  const g = new THREE.Group();
+  const m = new THREE.MeshStandardMaterial({ color: 0x2a2d33, metalness: 0.5, roughness: 0.4 });
+  const lit = new THREE.MeshBasicMaterial({ color: 0xff3030 });
+  const b = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.25, 0.9), m); g.add(b);
+  g.userData.props = [];
+  for (const [x, z] of [[-0.8, -0.8], [0.8, -0.8], [-0.8, 0.8], [0.8, 0.8]]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, 1.2), m); arm.position.set(x / 2, 0, z / 2); arm.rotation.y = Math.atan2(x, z); g.add(arm);
+    const p = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.02, 0.1), m); p.position.set(x, 0.15, z); g.add(p); g.userData.props.push(p);
+  }
+  const l = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 4), lit); l.position.set(0, -0.1, -0.45); g.add(l);
+  g.scale.setScalar(2.2);
+  return g;
+}

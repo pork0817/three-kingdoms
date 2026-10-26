@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { FACTIONS, GENERALS, TACTICS, WEAPONS, UNIT_TYPES, COUNTER, FORMATIONS, gname } from './data.js';
 import { makeNoise, clamp, lerp, smoothstep, rand, pick, sleep, tween, ease, fmt, mulberry32 } from './util.js';
-import { makeBanner, waveBanner, treeGeometries, makeWall, makeTent, makeCatapult, makeShip, makeRamCart, makeLogRam, makeLadder, makeSiegeTower } from './models.js';
+import { makeBanner, waveBanner, treeGeometries, makeWall, makeTent, makeCatapult, makeShip, makeRamCart, makeLogRam, makeLadder, makeSiegeTower, makeTank, makeDrone } from './models.js';
 import { Q } from './settings.js';
 import { makeHero, soldierRig, poseAngles, animateHero } from './figures.js';
 import { battleLines, bark, logLine } from './dialogue.js';
@@ -12,7 +12,7 @@ import { el, say, choose, modal, toast, titleCard, hideDialog, portrait, root } 
 import * as SFX from './audio.js';
 
 const V2 = THREE.Vector2;
-const SP = { inf: 1.45, spear: 1.45, archer: 1.55, cav: 2.3 };
+const SP = { inf: 1.45, spear: 1.45, archer: 1.55, cav: 2.3, tank: 8 };
 const COMP = {
   wei: { inf: 0.25, spear: 0.2, cav: 0.35, archer: 0.2 },
   shu: { inf: 0.25, spear: 0.3, cav: 0.2, archer: 0.25 },
@@ -230,9 +230,12 @@ export class Battle {
     this.arrowMesh = new THREE.InstancedMesh(ag, new THREE.MeshBasicMaterial({ color: 0x2a1e12 }), 1500);
     this.arrowMesh.count = 0; this.arrowMesh.frustumCulled = false;
     s.add(this.arrowMesh);
+    this.tracers = [];
+    this.tracerMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, 0.06, 2.5), new THREE.MeshBasicMaterial({ color: 0xffe080 }), 600);
+    this.tracerMesh.count = 0; this.tracerMesh.frustumCulled = false; s.add(this.tracerMesh);
     // 批次
     this.batches = {};
-    for (const side of ['p', 'e']) for (const type of Object.keys(UNIT_TYPES)) {
+    for (const side of ['p', 'e']) for (const type of Object.keys(UNIT_TYPES).filter(t => t !== 'tank')) {
       const ut = this.naval && type === 'cav' ? 'inf' : type;
       const parts = soldierRig(ut, side === 'p' ? this.pf : this.ef, side === 'p' ? this.state.weapons : (this.cfg.enemy.weapons || []));
       const col = FACTIONS[side === 'p' ? this.pf : this.ef].color;
@@ -427,6 +430,7 @@ export class Battle {
     }
   }
 
+  M(side, m) { return side === 'p' && this.state.hasModern?.(m); }
   hasWeapon(side, w) {
     if (w === 'ladder') return true;
     if (side === 'p') return this.state.hasWeapon(w);
@@ -456,6 +460,12 @@ export class Battle {
     const W = (w) => this.hasWeapon(sq.side, w);
     if (sq.type === 'cav' && W('armor')) def *= 1.3;
     if (sq.type === 'cav' && W('horse')) { spd *= 1.2; atk *= 1.1; }
+    const MO = (m) => this.M(sq.side, m);
+    if (MO('vest')) def *= 1.5;
+    if (sq.type === 'cav' && MO('jeep')) spd *= 1.5;
+    if (sq.type === 'archer' && MO('rifle')) { atk *= 2.2; range *= 1.3; }
+    if (sq.type === 'archer' && MO('mg')) atk *= 1.8;
+    if ((sq.type === 'inf' || sq.type === 'spear') && MO('rpg')) atk *= 1.4;
     if (sq.type === 'inf' && W('rattan')) def *= 1.25;
     if (sq.type === 'cav' && this.hasWeapon(sq.side === 'p' ? 'e' : 'p', 'caltrop') && !sq.engaged) spd *= 0.7;
     if (sq.confusedUntil > this.simT) { atk *= 0.5; spd *= 0.3; }
@@ -482,8 +492,8 @@ export class Battle {
   }
 
   layoutSquad(sq) {
-    const perSoldier = this.perSoldier;
-    const n = clamp(Math.ceil(sq.troops / perSoldier), 6, 140);
+    sq.per = sq.type === 'tank' ? 500 : this.perSoldier;
+    const n = sq.type === 'tank' ? clamp(Math.ceil(sq.troops / 500), 1, 10) : clamp(Math.ceil(sq.troops / sq.per), 6, 140);
     const sp = SP[sq.type];
     sq.soldiers = [];
     if (sq.wallSquad) {
@@ -555,7 +565,7 @@ export class Battle {
   }
   rebuildBatches() {
     for (const b of Object.values(this.batches)) b.list = [];
-    for (const sq of this.squads) for (const so of sq.soldiers) { so.sq = sq; this.batches[sq.side + sq.type].list.push(so); }
+    for (const sq of this.squads) for (const so of sq.soldiers) { so.sq = sq; this.batches[sq.side + sq.type]?.list.push(so); }
     for (const b of Object.values(this.batches)) { const n = Math.min(900, b.list.length); for (const p of b.parts) for (const m of p.meshes) m.count = n; }
   }
 
@@ -633,7 +643,9 @@ export class Battle {
 
   defaultPlayerRows() {
     const c = this.cfg, st = this.state;
-    const avail = Math.min(st.troops, c.maxTroops || st.troops);
+    const avail0 = Math.min(st.troops, c.maxTroops || st.troops);
+    const tankT = st.tanks > 0 && !this.naval ? Math.floor(Math.min(st.tanks * 500, avail0 * 0.4) / 500) * 500 : 0;
+    const avail = avail0 - tankT;
     const gens = st.generals.filter(g => GENERALS[g] && !(this.injured || []).includes(g)).sort((a, b) => (GENERALS[b].war + GENERALS[b].lead) - (GENERALS[a].war + GENERALS[a].lead));
     let leader = c.playerLeader && st.generals.includes(c.playerLeader) ? c.playerLeader : gens[0];
     const others = (c.playerGenerals || []).filter(g => st.generals.includes(g) && g !== leader);
@@ -645,6 +657,8 @@ export class Battle {
     for (let i = 0; i < n; i++) rows.push({ type: types[i], general: i === 0 ? leader : (others[i - 1] || ''), troops: Math.floor(avail / n / 500) * 500, wave: i < 3 ? 1 : 2, ambush: false });
     // 鐵律：主將所在部隊為步兵
     rows[0].type = this.siege && this.defSide === 'p' ? 'inf' : rows[0].type;
+    // 穿越模式：自動編入坦克隊
+    if (tankT > 0) rows.push({ type: 'tank', general: '', troops: tankT, wave: 1, ambush: false });
     return rows;
   }
 
@@ -653,7 +667,9 @@ export class Battle {
     this.squads = this.squads.filter(s => s.side !== 'p' || s.reinforcement);
     rows.forEach((r, i) => {
       if (r.troops <= 0) return;
-      if (this.naval && r.type === 'cav') r.type = 'inf';
+      if (this.naval && (r.type === 'cav' || r.type === 'tank')) r.type = 'inf';
+      if (r.type === 'tank') r.troops = Math.min(r.troops, (this.state.tanks || 0) * 500);
+      if (r.troops <= 0) return;
       const sq = this.makeSquad('p', { type: r.type, troops: r.troops, general: r.general || null, wave: r.wave, ambush: r.ambush, leader: i === 0, morale: this.cfg.playerMorale });
       if (this.siege && this.defSide === 'p' && r.type === 'archer') { sq.wallSquad = true; sq.onWall = true; }
       this.squads.push(sq);
@@ -733,6 +749,7 @@ export class Battle {
   }
   visibleTo(side, s) {
     if (this.visR === Infinity || s.side === side) return true;
+    if (side === 'p' && (this.M('p', 'nvg') || this.M('p', 'drone'))) return true;
     if (s.engaged || s._seenT > this.simT) return true;
     for (const o of this.squads) if (o.side === side && !o.dead && !o.escaped && o.pos.distanceTo(s.pos) < this.visR) { s._seenT = this.simT + 2; return true; }
     return false;
@@ -907,7 +924,8 @@ export class Battle {
     }
     // 冷卻 & 敵 AI 兵法
     this._aiT = (this._aiT || 0) + dt;
-    if (this._aiT > 1) { this._aiT = 0; this.enemyAI(); }
+    if (this._aiT > 1) { this._aiT = 0; this.enemyAI('e'); if (this.autoP) this.autoCommand(); }
+    this.modernTick(dt);
     this.checkEnd();
   }
 
@@ -930,7 +948,7 @@ export class Battle {
     const foes = this.enemiesOf(sq.side).filter(s => this.visibleTarget(s, sq.side));
     if (!foes.length) return null;
     let best = null, bd = 1e9;
-    const isArch = sq.type === 'archer';
+    const isArch = sq.type === 'archer' || sq.type === 'tank';
     for (const f of foes) {
       let d = sq.pos.distanceTo(f.pos);
       if (f.routed) d += 40;
@@ -1074,7 +1092,7 @@ export class Battle {
     }
     const d = sq.pos.distanceTo(tgt.pos);
     const reach = sq.radius + tgt.radius + st.range;
-    if (sq.type === 'archer') {
+    if (sq.type === 'archer' || sq.type === 'tank') {
       const close = this.enemiesOf(sq.side).find(e => this.visibleTarget(e) && e.type !== 'archer' && !e.wallSquad && e.pos.distanceTo(sq.pos) < sq.radius + e.radius + 3);
       if (close) { this.melee(sq, close, st, dt, 0.45); return; }
       if (d > reach * 0.92) { this.moveToward(sq, tgt.pos, st.spd, dt); sq.state = 'move'; }
@@ -1131,6 +1149,7 @@ export class Battle {
     if (tgt.attackers > 1) m *= 1.12;
     if (tgt.routed) m *= 1.8;
     if (tgt.wallSquad && sq.onWall) m *= 0.5;
+    if (tgt.type === 'cav' && this.M(sq.side, 'rpg')) m *= 1.5;
     if (sq.wallSquad && tgt.onWall) m *= 1.4;
     if (this.charging(sq) && this.sides[sq.side].buffs.some(b => b.id === 'charge' && b.until > this.simT)) m *= 1.2;
     const dmg = sq.troops * 0.0105 * st.atk * m / ts.def * dt;
@@ -1148,7 +1167,7 @@ export class Battle {
   shoot(sq, tgt, st, dt) {
     sq.engaged = true; sq.state = 'fight'; sq.fightWith = tgt;
     const ts = this.stats(tgt);
-    let m = COUNTER.archer[tgt.type];
+    let m = COUNTER[sq.type === 'tank' ? 'tank' : 'archer'][tgt.type] ?? 1;
     if (tgt.wallSquad) m *= 0.5;
     if (tgt.siegeMode === 'ram' && tgt.engine === 'cart' && !this.gate.broken) m *= 0.45;
     if (sq.wallSquad) m *= 1.2;
@@ -1169,6 +1188,19 @@ export class Battle {
   volleyVisual(sq, tgt, n) {
     const alive = sq.soldiers.filter(s => s.alive), talive = tgt.soldiers.filter(s => s.alive);
     if (!alive.length) return;
+    if (sq.type === 'tank') {
+      for (const a of alive) { const b = talive.length ? pick(talive) : { x: tgt.pos.x, z: tgt.pos.y, y: 0 }; this.launchShell(new THREE.Vector3(a.x, a.y + 2.2, a.z), new THREE.Vector3(b.x, (b.y || 0), b.z), 0.5, null); }
+      return;
+    }
+    if (sq.type === 'archer' && this.M(sq.side, 'rifle')) {
+      SFX.gunshot(0.16);
+      for (let i = 0; i < n; i++) {
+        const a = pick(alive), b = talive.length ? pick(talive) : { x: tgt.pos.x, z: tgt.pos.y, y: 0 };
+        this.tracers.push({ from: new THREE.Vector3(a.x, a.y + 1.4, a.z), to: new THREE.Vector3(b.x + rand(-1, 1), (b.y || 0) + 1, b.z + rand(-1, 1)), t: -Math.random() * 0.3, dur: 0.12 });
+        if (Math.random() < 0.3) this.particlesAdd.emit(a.x, a.y + 1.4, a.z, 0, 0.5, 0, 0.08, 1.2, 1, 0.9, 0.4, 1, 0, 0);
+      }
+      return;
+    }
     if (Math.random() < 0.3) SFX.whoosh(0.07);
     for (let i = 0; i < n; i++) {
       const a = pick(alive), b = talive.length ? pick(talive) : { x: tgt.pos.x, z: tgt.pos.y, y: this.ground(tgt.pos.x, tgt.pos.y) };
@@ -1275,7 +1307,7 @@ export class Battle {
     const S = this.sides[side], T = TACTICS[id];
     const L = GENERALS[side === 'p' ? this.playerLeader : this.enemyLeader];
     const intF = 1 + ((L?.int || 60) - 70) / 80;
-    S.cd[id] = this.simT + T.cd;
+    S.cd[id] = this.simT + T.cd * (this.M(side, 'radio') ? 0.5 : 1);
     const mine = this.squads.filter(s => s.side === side && !s.dead && !s.routed);
     const who = side === 'p' ? '我軍' : '敵軍';
     switch (id) {
@@ -1403,27 +1435,79 @@ export class Battle {
     return true;
   }
 
-  enemyAI() {
-    const S = this.sides.e;
-    if (this.cfg.noEnemyTactics) return;
-    const morale = this.sideMorale('e');
-    const tryUse = (id, p) => { if (S.tactics.includes(id) && this.canUse('e', id) && Math.random() < p) this.useTactic('e', id); };
+  enemyAI(side = 'e') {
+    const S = this.sides[side];
+    if (side === 'e' && this.cfg.noEnemyTactics) return;
+    const morale = this.sideMorale(side);
+    const tryUse = (id, p) => { if (S.tactics.includes(id) && this.canUse(side, id) && Math.random() < p) this.useTactic(side, id); };
     if (morale < 55) tryUse('drum', 0.4);
-    if (this.squads.some(s => s.side === 'e' && s.type === 'archer' && s.engaged)) tryUse('volley', 0.2);
-    if (this.squads.some(s => s.side === 'e' && s.type === 'cav' && s.released && !s.dead && this.enemiesOf('e').some(p => p.pos.distanceTo(s.pos) < 70))) tryUse('charge', 0.2);
-    const pin = this.enemiesOf('e').some(p => this.forestAt(p.pos.x, p.pos.y) + this.campAt(p.pos.x, p.pos.y) > 0.4);
+    if (this.squads.some(s => s.side === side && s.type === 'archer' && s.engaged)) tryUse('volley', 0.2);
+    if (this.squads.some(s => s.side === side && s.type === 'cav' && s.released && !s.dead && this.enemiesOf(side).some(p => p.pos.distanceTo(s.pos) < 70))) tryUse('charge', 0.2);
+    const pin = this.enemiesOf(side).some(p => this.forestAt(p.pos.x, p.pos.y) + this.campAt(p.pos.x, p.pos.y) > 0.4);
     if (this.simT > 12) tryUse('fire', pin ? 0.3 : 0.05);
-    if (this.squads.filter(s => s.side === 'e' && s.engaged).length >= 2) tryUse('shield', 0.15);
+    if (this.squads.filter(s => s.side === side && s.engaged).length >= 2) tryUse('shield', 0.15);
     tryUse('rockfall', 0.35);
-    if (this.simT > 10) { tryUse('decoy', 0.06); tryUse('trap', this.enemiesOf('e').some(s => s.type === 'cav' && s.state === 'move') ? 0.25 : 0); tryUse('firearrow', 0.12); tryUse('encircle', 0.05); }
-    if (this.sideLossRatio('e') > 0.35) tryUse('medic', 0.2);
+    if (this.simT > 10) { tryUse('decoy', 0.06); tryUse('trap', this.enemiesOf(side).some(s => s.type === 'cav' && s.state === 'move') ? 0.25 : 0); tryUse('firearrow', 0.12); tryUse('encircle', 0.05); }
+    if (this.sideLossRatio(side) > 0.35) tryUse('medic', 0.2);
     if (this.simT > 35) tryUse('fireship', 0.2);
     if (this.simT > 20) tryUse('feint', 0.03);
   }
 
+  // —— 自動指揮：放出所有部隊、自動施放兵法 ——
+  autoCommand() {
+    for (const s of this.squads) {
+      if (s.side !== 'p' || s.dead) continue;
+      if (!s.released && !s.hidden) { s.released = true; s.state = 'idle'; }
+      if (s.order === 'move' && !s.moveTo) s.order = 'auto';
+      if (this.siege && this.defSide === 'p' && !s.wallSquad) { s.order = this.gate.broken || this.pursuing ? 'auto' : 'hold'; }
+    }
+    if (this.squads.some(s => s.side === 'p' && s.hidden && !s.dead) && this.squads.some(e => e.side === 'e' && !e.dead && e.pos.y > -20)) this.triggerAmbush('p');
+    this.enemyAI('p');
+  }
+  toggleAuto(on = !this.autoP) {
+    this.autoP = on;
+    this.autoBtn?.classList.toggle('active', on);
+    this.log('p', on ? '交由將領自動指揮' : '恢復親自指揮');
+    if (on) this.autoCommand();
+    this.buildCards();
+  }
+
+  // —— 穿越模式：現代裝備的持續效果 ——
+  modernTick(dt) {
+    if (!this.state.timeTravel || this.phase !== 'fight') return;
+    const foes = this.enemiesOf('p').filter(e => !e.routed && (this.visibleTarget(e, 'p') || this.M('p', 'drone')));
+    const mine = this.squads.filter(s => s.side === 'p' && !s.dead && !s.escaped);
+    const boomAt = (t, pct, mor, label) => {
+      const p = new THREE.Vector3(t.pos.x + rand(-6, 6), this.ground(t.pos.x, t.pos.y), t.pos.y + rand(-6, 6));
+      const back = mine[0] ? mine[0].pos : new V2(0, 120);
+      this.launchShell(new THREE.Vector3(back.x, 30, back.y + 30), p, 1.4, () => { t.loss += t.troops * pct + 30; t.morale -= mor; });
+      if (label && (!this._mlog || this.simT - this._mlog > 10)) { this._mlog = this.simT; this.log('p', label); }
+    };
+    if (this.M('p', 'mortar') && foes.length && (this._mortT = (this._mortT ?? 4) - dt) <= 0) { this._mortT = 6; boomAt(foes.sort((a, b) => b.troops - a.troops)[0], 0.035, 6, '迫擊砲轟擊敵陣！'); }
+    if (this.M('p', 'drone') && foes.length && (this._droneT = (this._droneT ?? 8) - dt) <= 0) { this._droneT = 9; boomAt(pick(foes), 0.02, 4, '無人機投彈！'); }
+    if (this.M('p', 'medkit')) for (const s of mine) if (!s.engaged && s.troops < s.max) s.troops = Math.min(s.max, s.troops + s.max * 0.004 * dt);
+    if (this.M('p', 'c4') && this.siege && this.attSide === 'p' && !this.gate.broken && this.simT > 15 && !this._c4) {
+      this._c4 = true; this.gate.hp = 0;
+      const gp = this.gatePos();
+      for (let i = 0; i < 80; i++) this.particlesAdd.emit(gp.x + rand(-6, 6), rand(1, 9), gp.y, rand(-8, 8), rand(2, 12), rand(-8, 8), rand(0.5, 1.2), rand(3, 7), 1, rand(0.4, 0.8), 0.1, 1, 6, -2);
+      SFX.boom(0.9); this.log('p', '工兵引爆塑膠炸藥，城門被炸開了！'); this.camShake = 1;
+    }
+    // 坦克攻城：砲擊城門
+    if (this.siege && !this.gate.broken) for (const s of this.squads) if (s.type === 'tank' && s.side === this.attSide && !s.dead && s.pos.distanceTo(this.gatePos()) < 60) this.gate.hp -= 25 * s.soldiers.filter(x => x.alive).length * dt;
+  }
+  launchShell(from, to, dur, onHit) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.35, 6, 4), new THREE.MeshBasicMaterial({ color: 0x222222 }));
+    this.scene.add(m);
+    this.boulders.push({ m, from, to, t: 0, dur, arc: from.distanceTo(to) * 0.2, onHit: () => {
+      for (let i = 0; i < 40; i++) this.particlesAdd.emit(to.x, to.y + 1, to.z, rand(-7, 7), rand(2, 10), rand(-7, 7), rand(0.4, 0.9), rand(2.5, 6), 1, rand(0.4, 0.75), 0.1, 1, 5, -3);
+      for (let i = 0; i < 14; i++) this.particlesN.emit(to.x, to.y + 2, to.z, rand(-3, 3), rand(2, 5), rand(-3, 3), rand(2, 4), rand(5, 9), 0.25, 0.23, 0.2, 0.5, -0.2, 3);
+      SFX.boom(0.5); onHit && onHit();
+    } });
+  }
+
   // ———————————————— 視覺 ————————————————
   updateVisuals(rdt, sdt) {
-    for (const sq of this.squads) sq._hideV = (sq.hidden && sq.side === 'e' && !sq.revealed && !this.cfg.enemyAmbush?.revealed) || (sq.side === 'e' && this.phase === 'fight' && !this.visibleTo('p', sq));
+    for (const sq of this.squads) sq._hideV = (sq.hidden && sq.side === 'e' && !sq.revealed && !this.cfg.enemyAmbush?.revealed && !this.M('p', 'drone')) || (sq.side === 'e' && this.phase === 'fight' && !this.visibleTo('p', sq));
     this.updateNaval(rdt);
     this.updateWeather(rdt);
     this.updateSiegeGear(rdt);
@@ -1464,7 +1548,7 @@ export class Battle {
     // 殺傷對應的士兵死亡
     for (const sq of this.squads) {
       if (!sq.soldiers.length) continue;
-      const want = sq.dead ? 0 : Math.ceil(sq.troops / this.perSoldier);
+      const want = sq.dead ? 0 : Math.ceil(sq.troops / (sq.per || this.perSoldier));
       let alive = sq.soldiers.filter(s => s.alive);
       while (alive.length > Math.max(want, 0)) {
         let k;
@@ -1527,6 +1611,15 @@ export class Battle {
       return true;
     });
     am.count = ai; am.instanceMatrix.needsUpdate = true;
+    let ti = 0;
+    this.tracers = this.tracers.filter(a => {
+      a.t += sdt; if (a.t > a.dur) return false; if (a.t < 0) return true;
+      tmpV.lerpVectors(a.from, a.to, a.t / a.dur);
+      if (ti < 600) { dummy.position.copy(tmpV); dummy.scale.setScalar(1); dummy.lookAt(a.to); dummy.updateMatrix(); this.tracerMesh.setMatrixAt(ti++, dummy.matrix); }
+      return true;
+    });
+    this.tracerMesh.count = ti; this.tracerMesh.instanceMatrix.needsUpdate = true;
+    this.updateTanks(rdt, sdt);
     // 投石
     this.boulders = this.boulders.filter(b => {
       b.t += sdt;
@@ -1568,6 +1661,33 @@ export class Battle {
     if (this.camShake > 0) { this.camShake -= rdt; this.camera.position.x += Math.sin(t * 60) * this.camShake * 0.6; }
   }
 
+  // 坦克：每個「士兵」就是一輛坦克
+  updateTanks(rdt, sdt) {
+    for (const sq of this.squads) {
+      if (sq.type !== 'tank') continue;
+      sq.tankMeshes ||= [];
+      sq.soldiers.forEach((so, i) => {
+        let m = sq.tankMeshes[i];
+        if (!m) { m = makeTank(FACTIONS[sq.side === 'p' ? this.pf : this.ef].color); this.scene.add(m); sq.tankMeshes[i] = m; }
+        if (so.gone || sq.escaped) { m.visible = false; return; }
+        this.updateSoldier(so, sq, sdt, rdt);
+        m.visible = !sq._hideV;
+        m.position.set(so.x, this.ground(so.x, so.z) + (so.alive ? 0 : -so.deadT * 0.05), so.z);
+        m.rotation.y = so.yaw;
+        if (!so.alive) { m.rotation.z = 0.15; m.traverse(o => { if (o.material && o.material.color && !o.userData.burnt) { o.userData.burnt = true; o.material = o.material.clone(); o.material.color.multiplyScalar(0.3); } }); }
+        if (sq.fightWith && so.alive) m.userData.turret.rotation.y = lerpAngle(m.userData.turret.rotation.y, Math.atan2(-(sq.fightWith.pos.x - so.x), -(sq.fightWith.pos.y - so.z)) - so.yaw, Math.min(1, rdt * 3));
+      });
+    }
+    // 無人機
+    if (this.M('p', 'drone') && this.phase === 'fight') {
+      if (!this.drone) { this.drone = makeDrone(); this.scene.add(this.drone); }
+      const c = this.squads.filter(s => s.side === 'p' && !s.dead).reduce((a, s) => a.add(s.pos), new V2()).multiplyScalar(1 / Math.max(1, this.squads.filter(s => s.side === 'p' && !s.dead).length));
+      const th = this.time * 0.4;
+      this.drone.position.set(c.x + Math.cos(th) * 40, 38 + Math.sin(this.time * 2) * 0.5, c.y - 40 + Math.sin(th) * 30);
+      this.drone.rotation.y = -th;
+      for (const p of this.drone.userData.props) p.rotation.y += rdt * 40;
+    }
+  }
   updateNaval(rdt) {
     if (!this.naval && !this.boats.length) return;
     const t = this.time;
@@ -1851,6 +1971,10 @@ export class Battle {
     const sp = el('div', 'row', '', spBox);
     const cmd = el('button', 'btn small b-cmd', '⚑ 指揮', spBox);
     cmd.onclick = () => { left.classList.toggle('open'); cmd.classList.toggle('active', left.classList.contains('open')); };
+    if (!document.body.classList.contains('phone')) { left.prepend(sp); cmd.style.display = 'none'; }
+    const autoRow = el('div', 'row', '', document.body.classList.contains('phone') ? spBox : left);
+    this.autoBtn = el('button', 'btn small' + (this.autoP ? ' active' : ''), '🤖 自動指揮', autoRow);
+    this.autoBtn.onclick = () => this.toggleAuto();
     const spBtns = [['⏸', 0], ['1×', 1], ['2×', 2], ['3×', 3]].map(([t, v]) => {
       const b = el('button', 'btn small' + (v === 1 ? ' active' : ''), t, sp);
       b.onclick = () => { this.setSpeed(v); };
@@ -2256,7 +2380,7 @@ export class Battle {
           <div class="sec-title">部隊編制（第一隊為主帥）　敵軍約 ${fmt(this.sides.e.init || this.sideTroops('e'))}</div>
           ${rows.map((r, i) => `<div class="sq-row" data-i="${i}">
               <div class="ix">${i === 0 ? '帥' : i + 1}</div>
-              <select class="ty">${Object.entries(UNIT_TYPES).filter(([k]) => !(this.naval && k === 'cav')).map(([k, t]) => `<option value="${k}" ${r.type === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select>
+              <select class="ty">${Object.entries(UNIT_TYPES).filter(([k]) => !(this.naval && (k === 'cav' || k === 'tank')) && (k !== 'tank' || this.state.tanks > 0)).map(([k, t]) => `<option value="${k}" ${r.type === k ? 'selected' : ''}>${t.name}</option>`).join('')}</select>
               <select class="gn">${gopts(r.general)}</select>
               <div class="tn">${fmt(r.troops)}</div>
               <div class="sub"><input type="range" class="tr" min="0" max="${avail}" step="500" value="${r.troops}" style="flex:1">
@@ -2427,8 +2551,8 @@ export class Battle {
     if (opts[i].v === 'stop') { this.finish('win'); return; }
     this.pursuing = true; this.pursueT = 22; this.ending = false; this.paused = false;
     this.sides.p.buffs.push({ id: 'pursue', spd: 1.3, atk: 1.2, until: this.simT + 30 });
-    for (const s of this.mySquads()) if (!s.wallSquad) { s.released = true; s.order = 'auto'; s.hidden = false; s.moveTo = null; }
-    this.log('p', '全軍追擊！');
+    for (const s of this.mySquads()) if (!s.wallSquad) { s.released = true; s.order = 'auto'; s.hidden = false; s.moveTo = null; if (this.siege && this.defSide === 'p') s.sally = true; }
+    this.log('p', this.siege && this.defSide === 'p' ? '城門大開，全軍出城追擊！' : '全軍追擊！');
     SFX.drumRoll(8, 0.14);
     const L = GENERALS[this.enemyLeader];
     const risk = this.cfg.pursuitAmbush ?? clamp(((L?.int || 60) - 72) / 90, 0, 0.3);
@@ -2596,4 +2720,34 @@ export async function showResults(state, res, cfg) {
     else { state.kill(g); state.renown -= 5; for (const x of state.generals) if (GENERALS[x]?.f === G.f) state.addLoyalty(x, -8); toast(`${G.name}被斬首`, 'bad'); }
   }
   state.emit('hud');
+}
+
+// —— 自動作戰：不進入戰場，直接模擬結果 ——
+export function autoBattle(app, state, cfg) {
+  const b = new Battle(app, state, cfg);
+  b.capturedE = []; b.capturedP = [];
+  b.setupSides(); b.build();
+  b.squads.push(...b.createEnemySquads()); b.layoutSide('e');
+  b.playerRows = b.defaultPlayerRows(); b.playerLeader = b.playerRows[0].general; b.applyPlayerRows(b.playerRows);
+  for (const s of b.squads) if (s.side === 'p') { s.released = !s.hidden; if (b.siege && b.defSide === 'p' && !s.wallSquad) s.order = 'hold'; }
+  b.sides.p.init = b.squads.filter(s => s.side === 'p').reduce((a, s) => a + s.troops, 0);
+  b.sides.e.init = b.squads.filter(s => s.side === 'e').reduce((a, s) => a + s.troops, 0);
+  b.deployed = b.sides.p.init;
+  b.assignSiegeRoles();
+  b.autoP = true;
+  b.phase = 'fight';
+  let res = null; b.resolveFight = r => res = r;
+  b.enemyBroken = function () { this.finish('win'); };
+  b.playerBroken = function () { this.finish('lose'); };
+  b.log = () => {};
+  const wasMuted = SFX.isMuted(); SFX.setMuted(true);
+  try {
+  for (let i = 0; i < 9000 && !res; i++) {
+    b.sim(0.05);
+    if (i % 25 === 0) b.updateVisuals(0.05, 0.05);
+  }
+  } finally { SFX.setMuted(wasMuted); }
+  if (!res) b.finish(b.sideTroops('p') / b.sides.p.init > b.sideTroops('e') / b.sides.e.init ? 'win' : 'lose', '戰至日暮，雙方收兵。');
+  b.dispose();
+  return res;
 }
