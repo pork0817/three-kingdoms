@@ -248,7 +248,7 @@ export const WEAPONS = {
   crossbow: { name: '諸葛連弩', desc: '弓兵攻擊 +40%，一弩十矢', price: 2400 },
   spear: { name: '丈八長槍', desc: '槍兵攻擊 +25%', price: 1200 },
   ladder: { name: '雲梯', desc: '基本軍備：攻城時步兵、槍兵可架梯攀城', price: 0, basic: true },
-  ram: { name: '衝車', desc: '攻城時以有頂棚的衝車撞門，破門速度 ×2（沒有衝車只能扛撞木）', price: 1000 },
+  ram: { name: '衝車', desc: '攻城時以有頂棚的衝車撞門：破門速度為撞木的兩倍多，頂棚可擋大半箭矢', price: 1000 },
   catapult: { name: '霹靂車', desc: '攻城時投石轟擊城牆守軍', price: 1800 },
   muniu: { name: '木牛流馬', desc: '糧道無憂：全軍士氣下降減緩', price: 1500 },
   warship: { name: '樓船艨艟', desc: '水畔作戰時全軍攻擊 +15%', price: 2200 },

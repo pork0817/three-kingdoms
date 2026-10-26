@@ -371,7 +371,7 @@ export class Battle {
     wall.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     this.scene.add(wall);
     this.wall = wall;
-    const gh = (c.gateHP || 4000) * (this.defSide === 'p' ? 1 + 0.35 * ((c.wallLevel || 1) - 1) : 1);
+    const gh = (c.gateHP || 4000) * (this.defSide === 'p' ? 1.8 * (1 + 0.35 * ((c.wallLevel || 1) - 1)) : 1);
     this.gate = { hp: gh, max: gh, broken: false, mesh: wall.userData.gate };
     // 城內建築
     const roofM = new THREE.MeshStandardMaterial({ color: 0x3a3a44, roughness: 0.6 });
@@ -975,6 +975,7 @@ export class Battle {
     // 同陣營互斥
     for (const o of this.squads) {
       if (o === sq || o.dead || o.side !== sq.side || o.hidden || o.wallSquad || o.climbing || o.onWall) continue;
+      if (this.siege && (sq.siegeMode === 'ram' || o.siegeMode === 'ram') && sq.pos.distanceTo(this.gatePos()) < 40) continue;
       const dd = sq.pos.distanceTo(o.pos), min = (sq.radius + o.radius) * 0.8;
       if (dd < min && dd > 0.01) sq.pos.addScaledVector(new V2().subVectors(sq.pos, o.pos), (min - dd) / dd * 0.25);
     }
@@ -1041,14 +1042,20 @@ export class Battle {
           if (l < 4 + sq.radius * 0.5) { sq.climbing = true; sq.climbT = 0; this.log(sq.side, `${this.sqName(sq)}架起雲梯攀城！`); }
           return;
         }
-        // 撞門
+        // 撞門：撞門部隊各有一條路線，讓衝車或撞木的前端正好抵住城門
         const gp = this.gatePos();
-        const l = this.moveToward(sq, gp, st.spd, dt);
-        if (l < sq.radius + 4) {
+        if (sq.engine === undefined) this.assignEngine(sq);
+        const rammers = this.squads.filter(o => o.side === sq.side && o.siegeMode === 'ram' && !o.dead && !o.routed).sort((a, b) => a.id - b.id);
+        const lane = Math.max(0, rammers.indexOf(sq));
+        const ramming = sq.siegeMode === 'ram';
+        const back = (sq.depth || 6) / 2 + (ramming ? (sq.engine === 'cart' ? 6 : 3.5) : 3);
+        const spot = new V2(gp.x + (ramming ? (lane === 0 ? 0 : (lane % 2 ? 5 : -5)) : ((sq.id % 3) - 1) * 9), gp.y + this.sgnAtt * back);
+        const l = this.moveToward(sq, spot, st.spd, dt);
+        if (l < 3.5) {
           sq.state = 'gate'; sq.engaged = true;
-          if (sq.engine === undefined) this.assignEngine(sq);
-          const em = sq.siegeMode === 'ram' ? (sq.engine === 'cart' ? 3.2 : 1.6) : 0.25;
-          this.gate.hp -= sq.troops * 0.0016 * st.atk * em * dt;
+          // 每秒破門量：衝車 40、撞木 18、徒手 4，隨兵力略增
+          const em = ramming ? (sq.engine === 'cart' ? 40 : 18) : 4;
+          this.gate.hp -= em * (0.4 + sq.troops / 6000) * st.atk * dt;
           if (sq.engineMesh?.userData.log && Math.sin(this.time * 4 + sq.id) > 0.97 && Math.random() < 0.5) SFX.drum(0.35);
           if (Math.random() < dt * 3) SFX.clash(0.12);
           if (Math.random() < dt * 4) this.particlesN.emit(gp.x + rand(-5, 5), rand(1, 4), gp.y, rand(-1, 1), rand(1, 2), rand(-1, 1), 1.5, 4, 0.6, 0.55, 0.45, 0.6, 0, 2);
@@ -1146,6 +1153,7 @@ export class Battle {
     const ts = this.stats(tgt);
     let m = COUNTER.archer[tgt.type];
     if (tgt.wallSquad) m *= 0.5;
+    if (tgt.siegeMode === 'ram' && tgt.engine === 'cart' && !this.gate.broken) m *= 0.45;
     if (sq.wallSquad) m *= 1.2;
     if (tgt.climbing) m *= 2.5;
     if (tgt.wallSquad && this.siege && sq.side === this.attSide && this.hasWeapon(sq.side, 'tower')) m *= 1.6;
