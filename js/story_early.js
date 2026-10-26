@@ -310,9 +310,9 @@ export const SHU_EARLY = [
         T('主公親率大軍征討', ''),
       ]],
       ['battle', S => ({
-        name: '長沙之戰', sub: '攻取荊南', terrain: 'siege', attacker: 'player', cityName: '長沙', gateHP: 3000,
+        name: '長沙之戰', sub: '攻取荊南', terrain: 'siege', attacker: 'player', cityName: '長沙', gateHP: 2500,
         playerLeader: S.flags.gyCS ? 'guanyu' : 'liubei', playerGenerals: ['zhangfei', 'zhaoyun', 'guanping'], maxTroops: 20000,
-        enemy: { faction: 'jingnan', leader: 'hanxuan', generals: ['hanxuan', 'huangzhong', 'weiyan'], troops: 14000, tactics: ['volley', 'rockfall'], comp: { inf: 0.4, spear: 0.2, archer: 0.4 } },
+        enemy: { faction: 'jingnan', leader: 'hanxuan', generals: ['hanxuan', 'huangzhong', 'weiyan'], troops: 12000, tactics: ['volley', 'rockfall'], comp: { inf: 0.4, spear: 0.2, archer: 0.4 } },
         parley: { enemyOpen: ['（城頭一員白髮老將張弓搭箭）來將通名！'] },
         captiveScript: { huangzhong: [], weiyan: [], hanxuan: [] },
       }), [

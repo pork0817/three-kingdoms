@@ -62,7 +62,7 @@ button { font-family: var(--font); }
 .labels.far .geo-label:not(.region) { display: none; }
 .geo-label { color: rgba(255, 240, 200, .55); font-size: 13px; letter-spacing: 3px; text-shadow: 0 1px 3px #000; font-style: italic; }
 .geo-label.region { font-size: 18px; color: rgba(255, 240, 210, .38); letter-spacing: 8px; }
-.faction-label { font-size: 64px; font-weight: 700; opacity: .55; text-shadow: 0 0 20px #000, 0 0 4px #000; transition: all 1s; letter-spacing: 0; }
+.faction-label { font-size: 64px; font-weight: 700; opacity: .55; text-shadow: 0 0 20px #000, 0 0 4px #000; transition: opacity .6s; letter-spacing: 0; }
 .labels.near .faction-label { opacity: 0; }
 .faction-label.fwei { color: var(--wei); } .faction-label.fshu { color: var(--shu); } .faction-label.fwu { color: var(--wu); }
 
@@ -345,3 +345,7 @@ button { font-family: var(--font); }
 .adv-row.ok { color: #9fe6a8; } .adv-row.no { color: #ffb4a6; }
 .adv-no { color: #b9a77a; font-size: 12px; }
 .tac-ic { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border: 1px solid #c9322a; color: #e0473a; font-size: 11px; border-radius: 3px; margin-right: 2px; }
+
+.label-anchor { pointer-events: none; }
+.label-anchor > .city-label { pointer-events: auto; }
+.labels > div { will-change: transform; }

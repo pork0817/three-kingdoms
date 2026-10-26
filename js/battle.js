@@ -948,7 +948,7 @@ export class Battle {
     if (best && bd > 1e4) return null;
     return best;
   }
-  canClimb(sq) { return (sq.type === 'inf' || sq.type === 'spear') && this.hasWeapon(sq.side, 'ladder'); }
+  canClimb(sq) { return (sq.type === 'inf' || sq.type === 'spear') && sq.siegeMode !== 'ram' && this.hasWeapon(sq.side, 'ladder'); }
   inRangeOfWall(sq, f) { return sq.pos.distanceTo(f.pos) < this.stats(sq).range + sq.radius + f.radius; }
 
   moveToward(sq, goal, spd, dt) {
@@ -996,7 +996,7 @@ export class Battle {
     // 攀城
     if (sq.climbing) {
       sq.climbT += dt; sq.state = 'climb';
-      sq.loss += sq.troops * 0.004 * dt;
+      sq.loss += sq.troops * 0.0025 * dt;
       if (sq.climbT > 9) { sq.climbing = false; sq.onWall = true; this.log(sq.side, `${this.sqName(sq)}登上城頭！`); }
       return;
     }
@@ -1047,7 +1047,7 @@ export class Battle {
         if (l < sq.radius + 4) {
           sq.state = 'gate'; sq.engaged = true;
           if (sq.engine === undefined) this.assignEngine(sq);
-          const em = sq.engine === 'cart' ? 2.2 : sq.engine === 'log' ? 1 : 0.25;
+          const em = sq.siegeMode === 'ram' ? (sq.engine === 'cart' ? 3.2 : 1.6) : 0.25;
           this.gate.hp -= sq.troops * 0.0016 * st.atk * em * dt;
           if (sq.engineMesh?.userData.log && Math.sin(this.time * 4 + sq.id) > 0.97 && Math.random() < 0.5) SFX.drum(0.35);
           if (Math.random() < dt * 3) SFX.clash(0.12);
@@ -1131,7 +1131,7 @@ export class Battle {
     if (this.charging(sq) && this.sides[sq.side].buffs.some(b => b.id === 'charge' && b.until > this.simT)) m *= 1.2;
     const dmg = sq.troops * 0.0105 * st.atk * m / ts.def * dt;
     tgt.loss += dmg; sq.killed += dmg;
-    sq.yaw = lerpAngle(sq.yaw, Math.atan2(-(tgt.pos.x - sq.pos.x), -(tgt.pos.y - sq.pos.y)), Math.min(1, dt * 3));
+    if (!sq.wallSquad) sq.yaw = lerpAngle(sq.yaw, Math.atan2(-(tgt.pos.x - sq.pos.x), -(tgt.pos.y - sq.pos.y)), Math.min(1, dt * 3));
     if (Math.random() < dt * 2.2) SFX.clash(0.06 + Math.random() * 0.08);
     if (Math.random() < dt * 6) {
       const mx = (sq.pos.x + tgt.pos.x) / 2 + rand(-4, 4), mz = (sq.pos.y + tgt.pos.y) / 2 + rand(-4, 4);
@@ -1153,7 +1153,7 @@ export class Battle {
     if (hd > 5) m *= 1.2;
     const dmg = sq.troops * 0.0085 * st.atk * m / ts.def * dt;
     tgt.loss += dmg; sq.killed += dmg;
-    sq.yaw = lerpAngle(sq.yaw, Math.atan2(-(tgt.pos.x - sq.pos.x), -(tgt.pos.y - sq.pos.y)), Math.min(1, dt * 3));
+    if (!sq.wallSquad) sq.yaw = lerpAngle(sq.yaw, Math.atan2(-(tgt.pos.x - sq.pos.x), -(tgt.pos.y - sq.pos.y)), Math.min(1, dt * 3));
     sq.fireCd -= dt;
     if (sq.fireCd <= 0) {
       sq.fireCd = 1.1 + Math.random() * 0.4;
@@ -1622,8 +1622,20 @@ export class Battle {
   // —— 攻城器具 ——
   assignEngine(sq) {
     if (!(sq.type === 'inf' || sq.type === 'spear')) { sq.engine = null; return; }
-    this._carts = this._carts || 0;
-    if (this.hasWeapon(sq.side, 'ram') && this._carts < 2) { this._carts++; sq.engine = 'cart'; } else sq.engine = 'log';
+    this._carts = this._carts || {};
+    const n = this._carts[sq.side] || 0;
+    if (this.hasWeapon(sq.side, 'ram') && n < 2) { this._carts[sq.side] = n + 1; sq.engine = 'cart'; } else sq.engine = 'log';
+  }
+  // 開戰時分配攻城任務：有衝車的部隊撞門，其餘部隊架雲梯攀城
+  assignSiegeRoles() {
+    if (!this.siege) return;
+    const list = this.squads.filter(s => s.side === this.attSide && (s.type === 'inf' || s.type === 'spear') && !s.dead).sort((a, b) => b.troops - a.troops);
+    const rams = 2;
+    list.forEach((s, i) => {
+      if (s.siegeMode) return;
+      s.siegeMode = i < rams ? 'ram' : 'climb';
+      if (s.siegeMode === 'ram') this.assignEngine(s);
+    });
   }
   removeEngine(sq) { if (sq.engineMesh) { this.scene.remove(sq.engineMesh); sq.engineMesh = null; } }
   updateSiegeGear(rdt) {
@@ -1631,7 +1643,7 @@ export class Battle {
     const gp = this.gatePos();
     for (const sq of this.squads) {
       // 撞門器具：攻方步兵、槍兵在城門未破前推著衝車或扛著撞木
-      if (sq.side === this.attSide && (sq.type === 'inf' || sq.type === 'spear') && !this.gate.broken && !sq.dead && !sq.routed && !sq.escaped && !sq.onWall && !sq.climbing && this.phase !== 'setup' && sq.released && !this.canClimbFor(sq)) {
+      if (sq.side === this.attSide && sq.siegeMode === 'ram' && !this.gate.broken && !sq.dead && !sq.routed && !sq.escaped && !sq.onWall && !sq.climbing && this.phase !== 'setup') {
         if (sq.engine === undefined) this.assignEngine(sq);
         if (sq.engine && !sq.engineMesh) { sq.engineMesh = sq.engine === 'cart' ? makeRamCart() : makeLogRam(); sq.engineMesh.traverse(o => { if (o.isMesh) o.castShadow = true; }); this.scene.add(sq.engineMesh); }
         if (sq.engineMesh) {
@@ -1644,7 +1656,7 @@ export class Battle {
           if (log) log.position.z = sq.state === 'gate' ? Math.sin(this.time * 4 + sq.id) * 0.9 : 0;
           if (sq.state === 'gate' && Math.sin(this.time * 4 + sq.id) > 0.95 && Math.random() < 0.3) for (let i = 0; i < 6; i++) this.particlesN.emit(gp.x + rand(-4, 4), rand(1, 5), gp.y, rand(-2, 2), rand(1, 3), rand(-1, 1), 1.5, 3.5, 0.55, 0.5, 0.42, 0.6, 0, 2);
         }
-      } else if (sq.engineMesh && (this.gate.broken || sq.dead || sq.routed || sq.escaped)) this.removeEngine(sq);
+      } else if (sq.engineMesh) this.removeEngine(sq);
       // 雲梯
       const climbing = (sq.climbing || (sq.onWall && !sq.wallSquad)) && !sq.dead;
       if (climbing && !sq.ladders) {
@@ -1698,7 +1710,7 @@ export class Battle {
     for (const sq of this.squads) {
       for (const so of sq.soldiers) if (so.foe && (!so.foe.alive || so.foe.sq !== sq.fightWith)) so.foe = null;
       const T = sq.fightWith;
-      if (!sq.engaged || !T || T.dead || sq.state !== 'fight' || (sq.type === 'archer' && !this.archerMelee(sq))) continue;
+      if (sq.wallSquad || !sq.engaged || !T || T.dead || sq.state !== 'fight' || (sq.type === 'archer' && !this.archerMelee(sq))) continue;
       const rx = Math.cos(sq.yaw), rz = -Math.sin(sq.yaw);
       const front = sq.soldiers.filter(so => so.alive && so.row < (sq.type === 'cav' ? 3 : 2));
       if (!front.length) continue;
@@ -1711,7 +1723,7 @@ export class Battle {
       front.forEach((so, i) => { so.foe = near[Math.min(near.length - 1, Math.floor(i * near.length / front.length))]; });
     }
   }
-  archerMelee(sq) { return this.enemiesOf(sq.side).some(e => this.visibleTarget(e) && e.type !== 'archer' && !e.wallSquad && e.pos.distanceTo(sq.pos) < sq.radius + e.radius + 3); }
+  archerMelee(sq) { if (sq.wallSquad) return false; return this.enemiesOf(sq.side).some(e => this.visibleTarget(e) && e.type !== 'archer' && !e.wallSquad && e.pos.distanceTo(sq.pos) < sq.radius + e.radius + 3); }
 
   updateSoldier(so, sq, dt, rdt) {
     if (!so.alive) {
@@ -1727,7 +1739,7 @@ export class Battle {
     let tx = sq.pos.x + c * so.lx + s * so.lz + so.jx, tz = sq.pos.y - s * so.lx + c * so.lz + so.jz;
     const base = sq._spd || 7;
     let face = sq.yaw, act = 'idle', faceLock = false;
-    const melee = sq.engaged && sq.fightWith && !sq.fightWith.dead && sq.state === 'fight' && (sq.type !== 'archer' || this.archerMelee(sq));
+    const melee = !sq.wallSquad && sq.engaged && sq.fightWith && !sq.fightWith.dead && sq.state === 'fight' && (sq.type !== 'archer' || this.archerMelee(sq));
     const shooting = sq.engaged && sq.state === 'fight' && sq.type === 'archer' && !melee;
     if (sq.routed) {
       tx += Math.cos(so.ph) * 5; tz += Math.sin(so.ph) * 5;
@@ -1881,6 +1893,10 @@ export class Battle {
     const sq = this.selected;
     if (!sq || sq.side !== 'p' || sq.dead) return;
     const mk = (t, fn, on) => { const b = el('button', 'btn small' + (on ? ' active' : ''), t, o); b.onclick = fn; };
+    if (this.siege && this.attSide === 'p' && !this.gate.broken && (sq.type === 'inf' || sq.type === 'spear') && !sq.onWall && !sq.climbing) {
+      mk(sq.engine === 'cart' ? '推衝車撞門' : '扛撞木撞門', () => { sq.siegeMode = 'ram'; if (sq.engine == null) this.assignEngine(sq); sq.target = null; sq.order = 'auto'; sq.released = true; this.updateOrders(); }, sq.siegeMode === 'ram');
+      mk('架雲梯攀城', () => { sq.siegeMode = 'climb'; this.removeEngine(sq); sq.target = null; sq.order = 'auto'; sq.released = true; this.updateOrders(); }, sq.siegeMode === 'climb');
+    }
     if (this.siege && this.defSide === 'p' && !sq.wallSquad && !this.gate.broken) mk(sq.sally ? '回城' : '出城突擊', () => { sq.sally = !sq.sally; sq.order = sq.sally ? 'auto' : 'retreat'; sq.released = true; this.updateOrders(); }, sq.sally);
     if (!sq.released && !sq.hidden) mk('出擊', () => { sq.released = true; sq.state = 'idle'; this.buildCards(); this.updateOrders(); });
     if (sq.hidden) mk('伏兵殺出', () => this.useTactic('p', 'ambush'));
@@ -2287,7 +2303,7 @@ export class Battle {
     const c = this.cfg, st = this.state;
     let txt = c.tips || '';
     const hasCity = /城/.test(c.tips || '');
-    if (this.siege && this.attSide === 'p' && !hasCity) txt += (txt ? '　' : '') + '攻城戰：步兵、槍兵扛撞木撞門（有衝車更快），或架雲梯攀城；井闌、霹靂車可壓制城頭守軍。';
+    if (this.siege && this.attSide === 'p' && !hasCity) txt += (txt ? '　' : '') + '攻城戰：開戰時兵力最多的步兵／槍兵負責撞門（有衝車就推衝車，最多兩隊，否則扛撞木），其餘架雲梯攀城；戰鬥中點選部隊可切換「撞門／攀城」。井闌、霹靂車可壓制城頭守軍。';
     if (this.siege && this.defSide === 'p' && !hasCity) txt += (txt ? '　' : '') + '守城戰：弓兵自動佈於城牆。敵軍逼近城下時可用滾木礌石；火油可焚毀衝車。城門未破前，守軍需下令「出城突擊」才能出城。';
     if (!txt) return '';
     const rows = [];
@@ -2318,6 +2334,11 @@ export class Battle {
     this.sides.p.init = this.squads.filter(s => s.side === 'p').reduce((a, s) => a + s.troops, 0);
     this.sides.e.init = this.squads.filter(s => s.side === 'e').reduce((a, s) => a + s.troops, 0);
     this.deployed = this.sides.p.init;
+    this.assignSiegeRoles();
+    if (this.siege && this.attSide === 'p') {
+      const r = this.squads.filter(s => s.side === 'p' && s.siegeMode === 'ram');
+      if (r.length) this.log('p', `${r.map(s => this.sqName(s)).join('、')}${this.hasWeapon('p', 'ram') ? '推衝車' : '扛撞木'}撞門，其餘部隊架雲梯攀城（點選部隊可切換）`);
+    }
     this.phase = 'fight';
     this.paused = false;
     this.controls.enabled = true;

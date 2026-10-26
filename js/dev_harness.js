@@ -14,6 +14,7 @@ export function simBattle(app, S, cfg) {
   b.sides.p.init = b.squads.filter(s => s.side === 'p').reduce((a, s) => a + s.troops, 0);
   b.sides.e.init = b.squads.filter(s => s.side === 'e').reduce((a, s) => a + s.troops, 0);
   if (cfg.flood) b.doFlood(cfg.flood);
+  b.assignSiegeRoles();
   b.phase = 'fight';
   let res = null; b.resolveFight = r => res = r;
   b.enemyBroken = function () { this.finish('win'); }; b.playerBroken = function () { this.finish('lose'); };

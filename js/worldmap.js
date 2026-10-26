@@ -323,11 +323,15 @@ export class WorldMap {
       const hit = new THREE.Mesh(new THREE.SphereGeometry(2.6 + c.size * 0.4, 8, 6), new THREE.MeshBasicMaterial({ visible: false }));
       hit.position.copy(m.position); hit.userData.city = id;
       this.scene.add(hit);
+      // 外層交給 CSS2D 定位，內層負責樣式與放大效果（避免 transform 動畫造成標籤延遲）
+      const wrap = document.createElement('div');
+      wrap.className = 'label-anchor';
       const lab = document.createElement('div');
       lab.className = `city-label s${c.size}`;
       lab.innerHTML = `<span class="dot"></span><span class="nm">${c.name}</span>`;
       lab.onclick = (e) => { e.stopPropagation(); this.select(id); };
-      const obj = new CSS2DObject(lab);
+      wrap.appendChild(lab);
+      const obj = new CSS2DObject(wrap);
       obj.position.copy(m.position).add(new THREE.Vector3(0, 3.2 + c.size * 0.6, 0));
       this.scene.add(obj);
       this.cities[id] = { model: m, hit, label: lab, obj };
