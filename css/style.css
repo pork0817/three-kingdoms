@@ -516,3 +516,9 @@ body.phone .tt-wrap { width: 200px; height: 200px; }
 body.phone .tt-wheel span i { top: 8px; font-size: 13px; }
 body.phone.landscape .tt-wrap { width: 150px; height: 150px; }
 .tank-lbl { display: flex; align-items: center; padding: 0 8px; color: #b8d49a; font-size: 13px; border: 1px solid rgba(184,212,154,.4); border-radius: 4px; }
+.tt-tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 6px; }
+.tt-get-list { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: center; max-height: 90px; overflow: auto; }
+.tt-get-list .tt-get { font-size: 15px; }
+.wish-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; max-height: 50vh; overflow: auto; }
+.wish-grid .btn { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 6px 8px; }
+.wish-grid small { font-size: 11px; opacity: .8; line-height: 1.3; }

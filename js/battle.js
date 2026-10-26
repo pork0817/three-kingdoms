@@ -110,6 +110,11 @@ export class Battle {
     const N = this.noise, c = this.cfg;
     let h = N.fbm(x * 0.012, z * 0.012, 4) * 2.2 + N.fbm(x * 0.05, z * 0.05, 2) * 0.4;
     const r = Math.hypot(x, z);
+    if (this.naval && c.sea) {
+      // 外海：四面汪洋，遠處一座島嶼
+      const isl = c.island ? Math.hypot((x - c.island[0]) * 0.8, z - c.island[1]) : 1e9;
+      return -10 + smoothstep(110, 40, isl) * (16 + N.ridge(x * 0.03, z * 0.03, 3) * 18);
+    }
     if (this.naval) {
       const ax = Math.abs(x + N.fbm(z * 0.006, 2) * 30);
       return -7 + smoothstep(150, 215, ax) * (12 + N.ridge(x * 0.02, z * 0.02, 3) * 14) + smoothstep(230, 330, r) * 30;
@@ -289,7 +294,8 @@ export class Battle {
     this.scene.add(m);
     this.groundMesh = m;
     if (this.naval || this.cfg.riverMid || this.cfg.beach) {
-      const w = new THREE.Mesh(new THREE.PlaneGeometry(this.naval ? 900 : 900, this.naval ? 900 : (this.cfg.beach ? 900 : 60)), new THREE.MeshStandardMaterial({ color: this.naval ? 0x2a5a78 : 0x3a7aa8, roughness: 0.12, metalness: 0.25, transparent: true, opacity: 0.88 }));
+      const sea = this.naval && this.cfg.sea;
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(sea ? 2400 : 900, this.naval ? (sea ? 2400 : 900) : (this.cfg.beach ? 900 : 60), sea ? 120 : 1, sea ? 120 : 1), new THREE.MeshStandardMaterial({ color: sea ? 0x1b4f78 : this.naval ? 0x2a5a78 : 0x3a7aa8, roughness: 0.12, metalness: 0.25, transparent: true, opacity: 0.88 }));
       w.rotation.x = -Math.PI / 2; w.position.set(this.cfg.beach ? -560 : 0, this.naval ? 0.2 : -0.7, 0); w.receiveShadow = true; this.scene.add(w); this.water = w;
     }
     if (this.cfg.river) {
@@ -358,6 +364,7 @@ export class Battle {
       const x = (rnd() - 0.5) * 500, z = (rnd() - 0.5) * 500; const h = this.ground(x, z);
       const slope = Math.abs(this.ground(x + 2, z) - this.ground(x - 2, z));
       if (slope < 1 && rnd() < 0.7) continue;
+      if ((this.naval || this.cfg.beach || this.cfg.riverMid) && this.groundRaw(x, z) < 0.5) continue;
       if (this.siege && Math.abs(z - this.zw) < 20) continue;
       d.position.set(x, h, z); d.rotation.set(rnd() * 3, rnd() * 3, 0); d.scale.setScalar(0.5 + rnd() * 2.2); d.updateMatrix(); rm.setMatrixAt(ri++, d.matrix);
     }
@@ -1873,6 +1880,13 @@ export class Battle {
   updateNaval(rdt) {
     if (!this.naval && !this.boats.length) return;
     const t = this.time;
+    // 外海浪湧
+    if (this.cfg.sea && this.water && (this._waveT = (this._waveT || 0) + rdt) > 0.05) {
+      this._waveT = 0;
+      const pos = this.water.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), y = pos.getY(i); pos.setZ(i, Math.sin(x * 0.05 + t * 1.1) * 0.5 + Math.sin(y * 0.07 - t * 0.8) * 0.4); }
+      pos.needsUpdate = true; this.water.geometry.computeVertexNormals();
+    }
     for (const sq of this.squads) {
       if (!sq.ship) continue;
       if (sq.escaped) { this.scene.remove(sq.ship); sq.ship = null; continue; }
@@ -2370,13 +2384,13 @@ export class Battle {
     const btn = el('button', 'btn skip-btn', '跳過 ▶▶', root());
     btn.onclick = () => { this._skip = true; document.querySelectorAll('.title-card').forEach(t => t.remove()); };
     const end = new THREE.Vector3(0, 60, this.siege && this.attSide === 'e' ? 125 : 150), endT = new THREE.Vector3(0, 0, this.siege ? this.zw * 0.4 : 15);
-    const r0 = 230, D = 7500;
+    const r0 = 230, D = 4200;
     return new Promise(res => {
       const t0 = performance.now();
       const step = () => {
         const u = this._skip ? 1 : Math.min(1, (performance.now() - t0) / D);
         const e = ease.inOut(u);
-        const th = e * Math.PI * 2;
+        const th = Math.PI + e * Math.PI;
         const r = lerp(r0, end.z, smoothstep(0.75, 1, u));
         const h = lerp(110, end.y, smoothstep(0.6, 1, u));
         this.camera.position.set(Math.sin(th) * r, h, Math.cos(th) * r);

@@ -452,39 +452,105 @@ function grantModern(k) {
   if (state.modern.includes(k)) { const n = { N: 600, R: 1200, SR: 2000 }[M.r] || 2000; state.gold += n; return `重複獲得，系統兌換為 ${n} 金`; }
   state.modern.push(k); return M.desc;
 }
-async function systemModal() {
+// 補給轉盤：金錢、糧草、兵力、再轉一次、許願
+const SUPPLY = [
+  { id: 'g1', name: '軍餉', icon: '金', r: 'N', w: 22, fx: () => { state.gold += 1000; return ['gold', 1000]; } },
+  { id: 'f1', name: '糧車', icon: '糧', r: 'N', w: 20, fx: () => { state.food += 15000; return ['food', 15000]; } },
+  { id: 't1', name: '義勇', icon: '兵', r: 'N', w: 18, fx: () => { state.troops += 3000; return ['troops', 3000]; } },
+  { id: 'g2', name: '金庫', icon: '庫', r: 'R', w: 9, fx: () => { state.gold += 4000; return ['gold', 4000]; } },
+  { id: 'f2', name: '糧倉', icon: '倉', r: 'R', w: 8, fx: () => { state.food += 40000; return ['food', 40000]; } },
+  { id: 't2', name: '大軍', icon: '軍', r: 'R', w: 8, fx: () => { state.troops += 10000; return ['troops', 10000]; } },
+  { id: 'again', name: '再轉一次', icon: '再', r: 'SR', w: 9, fx: () => { state.spins++; return ['spins', 1]; } },
+  { id: 'wish', name: '許願', icon: '願', r: 'SSR', w: 6, fx: () => ['wish', 1] },
+];
+function drawSupply() { let r = Math.random() * SUPPLY.reduce((a, x) => a + x.w, 0); for (const s of SUPPLY) if ((r -= s.w) < 0) return s; return SUPPLY[0]; }
+// 許願：任選一件裝備（坦克可重複），或一筆鉅額物資
+async function wishModal() {
+  const eq = WHEEL.filter(k => !MODERN[k].instant && (k === 'tank' || !state.modern.includes(k)));
+  const opts = [...eq.map(k => ({ k, t: `${MODERN[k].name}`, d: MODERN[k].desc, c: RARITY[MODERN[k].r].color })),
+    { k: '$gold', t: '黃金 20000', d: '國庫充盈', c: '#ffd36a' }, { k: '$troops', t: '精兵 30000', d: '兵源大增', c: '#9fe6ff' }];
+  const k = await modal(`<h2>✨ 許願</h2><p style="text-align:center">系統：「宿主可任選一項願望。」</p>
+    <div class="wish-grid">${opts.map((o, i) => `<button class="btn wish" data-i="${i}" style="border-color:${o.c}"><b style="color:${o.c}">${o.t}</b><small>${o.d}</small></button>`).join('')}</div>`, [], 'wish-modal');
+  void k;
+}
+function pickWish() {
+  return new Promise(res => {
+    wishModal();
+    const eq = WHEEL.filter(k => !MODERN[k].instant && (k === 'tank' || !state.modern.includes(k)));
+    const keys = [...eq, '$gold', '$troops'];
+    setTimeout(() => document.querySelectorAll('.wish-modal .wish').forEach(b => b.onclick = () => {
+      document.querySelector('.wish-modal').parentElement.remove();
+      const w = keys[+b.dataset.i];
+      if (w === '$gold') { state.gold += 20000; res('黃金 +20000'); }
+      else if (w === '$troops') { state.troops += 30000; res('精兵 +30000'); }
+      else { grantModern(w); res(`獲得【${MODERN[w].name}】`); }
+    }), 0);
+  });
+}
+async function systemModal(tab = 'gear') {
   state.modern ||= []; state.spins ||= 0;
-  const seg = 360 / WHEEL.length;
-  const grad = WHEEL.map((k, i) => `${RARITY[MODERN[k].r].color}${i % 2 ? 'cc' : 'ff'} ${i * seg}deg ${(i + 1) * seg}deg`).join(',');
   const bg = el('div', 'modal-bg', '', root());
   const m = el('div', 'modal tt-modal', '', bg);
   let rot = 0, busy = false;
+  const list = () => tab === 'gear' ? WHEEL.map(k => ({ icon: MODERN[k].icon, r: MODERN[k].r })) : SUPPLY.map(s => ({ icon: s.icon, r: s.r }));
   const draw = (msg = '') => {
+    const L = list(), seg = 360 / L.length;
+    const grad = L.map((x, i) => `${RARITY[x.r].color}${i % 2 ? 'cc' : 'ff'} ${i * seg}deg ${(i + 1) * seg}deg`).join(',');
+    const multi = Math.min(10, state.spins);
     m.innerHTML = `<h2>⚡ 穿越系統</h2>
+      <div class="tt-tabs"><button class="btn small ${tab === 'gear' ? 'active' : ''}" data-tab="gear">裝備轉盤</button><button class="btn small ${tab === 'supply' ? 'active' : ''}" data-tab="supply">補給轉盤</button></div>
       <div class="tt-wrap"><div class="tt-ptr">▼</div><div class="tt-wheel" style="background:conic-gradient(${grad});transform:rotate(${rot}deg)">
-        ${WHEEL.map((k, i) => `<span style="transform:rotate(${(i + 0.5) * seg}deg)"><i>${MODERN[k].icon}</i></span>`).join('')}<b class="tt-hub">轉</b></div></div>
-      <div class="tt-msg">${msg || `剩餘轉盤次數 <b>${state.spins}</b>　金 ${fmt(state.gold)}`}</div>
-      <div class="tt-rar">${Object.entries(RARITY).map(([k, r]) => `<span style="color:${r.color}">■ ${r.name} ${r.weight}%</span>`).join('')}</div>
+        ${L.map((x, i) => `<span style="transform:rotate(${(i + 0.5) * seg}deg)"><i>${x.icon}</i></span>`).join('')}<b class="tt-hub">轉</b></div></div>
+      <div class="tt-msg">${msg || `剩餘轉盤次數 <b>${state.spins}</b>（兩個轉盤共用）　金 ${fmt(state.gold)}`}</div>
+      ${tab === 'gear' ? `<div class="tt-rar">${Object.entries(RARITY).map(([k, r]) => `<span style="color:${r.color}">■ ${r.name} ${r.weight}%</span>`).join('')}</div>
       <div class="sec-title">已持有裝備${state.modern.length ? '' : '（尚無）'}</div>
-      <div class="chips">${WHEEL.filter(k => !MODERN[k].instant).map(k => { const own = state.modern.includes(k); return `<span class="chip ${own ? '' : 'off'}" style="${own ? `border-color:${RARITY[MODERN[k].r].color}` : ''}" title="${MODERN[k].desc}">${MODERN[k].name}${k === 'tank' && state.tanks ? '×' + state.tanks : ''}</span>`; }).join('')}</div>
-      <p class="hint-txt">每季 +1 次、每場勝仗 +1 次。裝備效果只對我軍生效；點住裝備可看說明。</p>
-      <div class="modal-btns"><button class="btn primary spin" ${state.spins > 0 ? '' : 'disabled'}>轉動（${state.spins}）</button><button class="btn buy">購買一次 2000金</button><button class="btn close">關閉</button></div>`;
+      <div class="chips">${WHEEL.filter(k => !MODERN[k].instant).map(k => { const own = state.modern.includes(k); return `<span class="chip ${own ? '' : 'off'}" style="${own ? `border-color:${RARITY[MODERN[k].r].color}` : ''}" title="${MODERN[k].desc}">${MODERN[k].name}${k === 'tank' && state.tanks ? '×' + state.tanks : ''}</span>`; }).join('')}</div>`
+      : `<div class="tt-rar">${SUPPLY.map(s => `<span style="color:${RARITY[s.r].color}">${s.icon} ${s.name}</span>`).join('')}</div>
+      <p class="hint-txt">補給：金錢、糧草、兵力；抽中「許願」可任選一件裝備或鉅額物資。</p>`}
+      <div class="modal-btns"><button class="btn primary spin" data-n="1" ${state.spins > 0 ? '' : 'disabled'}>轉 ×1</button>
+        <button class="btn primary spin" data-n="${multi}" ${multi > 1 ? '' : 'disabled'}>連轉 ×${Math.max(2, multi)}</button>
+        ${state.spins > 10 ? `<button class="btn spin" data-n="${state.spins}">全部轉完 ×${state.spins}</button>` : ''}
+        <button class="btn buy">購買一次 2000金</button><button class="btn close">關閉</button></div>`;
+    m.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { if (!busy) { tab = b.dataset.tab; rot = 0; draw(); } });
     m.querySelector('.close').onclick = () => { if (!busy) { bg.remove(); updateHUD(); state.save(); done(); } };
     m.querySelector('.buy').onclick = () => { if (busy) return; if (state.gold < 2000) return toast('金錢不足', 'bad'); state.gold -= 2000; state.spins++; draw(); };
-    m.querySelector('.spin').onclick = async () => {
-      if (busy || state.spins <= 0) return;
-      busy = true; state.spins--;
-      const k = drawModern(), i = WHEEL.indexOf(k);
-      rot += 360 * 5 + (360 - ((i + 0.5) * seg + rot % 360) % 360) + rand(-seg * 0.3, seg * 0.3);
-      const w = m.querySelector('.tt-wheel'); w.style.transition = 'transform 3.6s cubic-bezier(.15,.85,.2,1)'; w.style.transform = `rotate(${rot}deg)`;
-      SFX.drumRoll(10, 0.3);
-      await sleep(3700);
-      const M = MODERN[k], R = RARITY[M.r], got = grantModern(k);
-      M.r === 'SSR' || M.r === 'SR' ? SFX.horn?.() : SFX.drum(0.6);
+    m.querySelectorAll('.spin').forEach(b => b.onclick = async () => {
+      const n = Math.min(+b.dataset.n, state.spins);
+      if (busy || n <= 0) return;
+      busy = true; state.spins -= n;
+      // 先抽出全部結果，轉盤停在最稀有的那一格
+      const order = ['N', 'R', 'SR', 'SSR'];
+      let lines = [], best = null, wishes = 0;
+      if (tab === 'gear') {
+        const got = Array.from({ length: n }, () => drawModern());
+        best = got.reduce((a, k) => order.indexOf(MODERN[k].r) > order.indexOf(MODERN[a].r) ? k : a);
+        const agg = {};
+        for (const k of got) { const t = grantModern(k); (agg[k] ||= { n: 0, t: [] }).n++; agg[k].t.push(t); }
+        lines = Object.entries(agg).sort((a, b) => order.indexOf(MODERN[b[0]].r) - order.indexOf(MODERN[a[0]].r))
+          .map(([k, v]) => `<span style="color:${RARITY[MODERN[k].r].color}">【${RARITY[MODERN[k].r].name}】${MODERN[k].name}${v.n > 1 ? ' ×' + v.n : ''}</span>${n === 1 ? `<br><small>${v.t[0]}</small>` : ''}`);
+        best = WHEEL.indexOf(best);
+      } else {
+        const got = Array.from({ length: n }, () => drawSupply());
+        const sum = { gold: 0, food: 0, troops: 0, spins: 0 };
+        let bi = 0;
+        for (const s of got) { const [k, v] = s.fx(); if (k === 'wish') wishes++; else sum[k] += v; if (order.indexOf(s.r) > order.indexOf(SUPPLY[bi].r)) bi = SUPPLY.indexOf(s); }
+        best = bi;
+        if (sum.gold) lines.push(`金 +${fmt(sum.gold)}`); if (sum.food) lines.push(`糧 +${fmt(sum.food)}`); if (sum.troops) lines.push(`兵 +${fmt(sum.troops)}`);
+        if (sum.spins) lines.push(`<span style="color:${RARITY.SR.color}">再轉一次 ×${sum.spins}</span>`);
+        if (wishes) lines.push(`<span style="color:${RARITY.SSR.color}">✨ 許願 ×${wishes}</span>`);
+      }
+      const seg = 360 / list().length;
+      rot += 360 * 5 + (360 - ((best + 0.5) * seg + rot % 360) % 360) + rand(-seg * 0.3, seg * 0.3);
+      const w = m.querySelector('.tt-wheel'); w.style.transition = `transform ${n > 1 ? 2.4 : 3.6}s cubic-bezier(.15,.85,.2,1)`; w.style.transform = `rotate(${rot}deg)`;
+      SFX.drumRoll(n > 1 ? 6 : 10, 0.3);
+      await sleep(n > 1 ? 2500 : 3700);
+      const top = tab === 'gear' ? MODERN[WHEEL[best]].r : SUPPLY[best].r;
+      top === 'SSR' || top === 'SR' ? SFX.horn?.() : SFX.drum(0.6);
+      for (let i = 0; i < wishes; i++) lines.push(await pickWish());
       busy = false;
-      draw(`<span class="tt-get" style="color:${R.color}">【${R.name}】${M.name}</span><br><small>${got}</small>`);
+      draw(`<div class="tt-get-list">${lines.map(l => `<div class="tt-get">${l}</div>`).join('')}</div>`);
       state.save(); updateHUD();
-    };
+    });
   };
   let done; const p = new Promise(r => done = r);
   draw();
@@ -823,11 +889,13 @@ async function showEnding(unified) {
 
 // —— 天下征戰 ——
 const FWEAP = { wei: ['armor'], shu: ['crossbow', 'spear'], wu: ['warship'] };
+// 長江沿岸城池：可選擇江上水戰；夷州須跨海
+const RIVER_CITIES = new Set(['jianye', 'ruxu', 'chaisang', 'wuchang', 'jiangling', 'yiling', 'yongan', 'jiangzhou', 'wujun']);
 function campaignBattle(target, attackerF, defenderF, playerAttacks, opts = {}) {
   const c = CITIES[target];
   const [x, z] = toXZ(c.lon, c.lat);
   const elev = heightAtXZ(x, z);
-  const terrain = opts.field ? (elev > 3.5 ? 'mountain' : 'plains') : (c.size >= 2 ? 'siege' : (elev > 3.5 ? 'mountain' : 'plains'));
+  const terrain = opts.naval ? 'naval' : opts.field ? (elev > 3.5 ? 'mountain' : 'plains') : (c.size >= 2 ? 'siege' : (elev > 3.5 ? 'mountain' : 'plains'));
   const enemyF = playerAttacks ? defenderF : attackerF;
   let top;
   if (playerAttacks) top = state.cityGenerals()[target] || [];
@@ -843,7 +911,7 @@ function campaignBattle(target, attackerF, defenderF, playerAttacks, opts = {}) 
   const weather = Math.random() < 0.18 ? (state.season === 3 && c.lat > 30 ? 'snow' : 'rain') : Math.random() < 0.08 ? 'fog' : null;
   return {
     name: `${c.name}之戰`, sub: `${FACTIONS[attackerF].full}進攻${FACTIONS[defenderF].full}`,
-    terrain, attacker: playerAttacks ? 'player' : 'enemy', cityName: c.name, time: opts.night ? 'night' : pick(['day', 'day', 'dusk', 'dawn']), weather,
+    terrain, sea: !!opts.sea, island: opts.sea ? [0, -330] : undefined, attacker: playerAttacks ? 'player' : 'enemy', cityName: c.name, time: opts.night ? 'night' : pick(['day', 'day', 'dusk', 'dawn']), weather,
     forest: terrain === 'mountain' ? 'sides' : (Math.random() < 0.3 ? 'sides' : null), river: Math.random() < 0.2, riverMid: terrain === 'plains' && Math.random() < 0.2,
     enemy: { faction: enemyF, leader: top[0], generals: top, troops, tactics, weapons: [...(FWEAP[enemyF] || []), ...(!playerAttacks ? ['ladder', 'ram'] : [])], formation: pick(['yulin', 'fengshi', 'heyi', 'fangyuan', 'yanxing']) },
     gateHP: 3000 + c.size * 1500, seed: Math.floor(Math.random() * 1000),
@@ -858,16 +926,18 @@ async function attackCity(id) {
   const c = CITIES[id], owner = state.owners[id];
   const from = neighbors(id).find(n => state.owns(n));
   const cost = Math.round(state.troops * 0.06);
+  const isle = id === 'yizhou';
   const opts = [
-    { text: '擂鼓出征', primary: true, value: 'go' },
+    { text: isle ? '跨海遠征' : '擂鼓出征', primary: true, value: 'go' },
     { text: '🤖 自動作戰', value: 'auto' },
-    ...(c.size >= 2 ? [{ text: '野戰誘敵', value: 'field' }] : []),
+    ...(RIVER_CITIES.has(id) ? [{ text: '⛵ 江上水戰', value: 'naval' }] : []),
+    ...(c.size >= 2 && !isle ? [{ text: '野戰誘敵', value: 'field' }] : []),
     ...(state.hasTactic('raid') ? [{ text: '夜襲劫營', value: 'night' }] : []),
     { text: '圍城斷糧', value: 'siege' },
     { text: '暫緩', value: 0 },
   ];
   const k = await modal(`<h2>出兵　${c.name}</h2><p>目標：${FACTIONS[owner].full}・${c.name}（${['', '小城', '大城', '都城'][c.size]}）<br>守軍約 <b>${fmt(state.garrison[id])}</b>　我軍可用兵力 <b>${fmt(state.troops)}</b><br>軍糧消耗約 <b>${fmt(cost)}</b>（持有 ${fmt(state.food)}）</p>
-    <p class="hint-txt">自動作戰：交由將領指揮，直接得出戰果（兵力懸殊時適用）。出兵耗費一季。野戰誘敵：在城外野戰，獲勝可大幅削弱守軍。圍城：不戰而使守軍每季減少三成、士氣下降，久圍可能開城投降。</p>`, opts);
+    <p class="hint-txt">${isle ? '夷州孤懸海外，須率水師跨海決戰，擊潰敵船即可登島。' : ''}${RIVER_CITIES.has(id) ? '江上水戰：在江面以戰船決戰，獲勝可大幅削弱守軍。' : ''}自動作戰：交由將領指揮，直接得出戰果（兵力懸殊時適用）。出兵耗費一季。野戰誘敵：在城外野戰，獲勝可大幅削弱守軍。圍城：不戰而使守軍每季減少三成、士氣下降，久圍可能開城投降。</p>`, opts);
   if (!k) return;
   if (state.food < cost) { toast('糧草不足以支撐出征！', 'bad'); return; }
   state.food -= cost;
@@ -882,12 +952,12 @@ async function attackCity(id) {
   playing = true; map.lock(true);
   if (hud) hud.right.style.visibility = 'hidden';
   await map.march(from, id, state.faction);
-  const res = await doBattle(campaignBattle(id, state.faction, owner, true, { field: k === 'field', night: k === 'night' }), k === 'auto');
+  const res = await doBattle(campaignBattle(id, state.faction, owner, true, { field: k === 'field', night: k === 'night', naval: k === 'naval' || isle, sea: isle }), k === 'auto');
   delete state.siege[id];
   if (res.result === 'win') {
-    if (k === 'field') {
+    if (k === 'field' || k === 'naval') {
       state.garrison[id] = Math.max(2000, Math.round(state.garrison[id] * 0.3));
-      toast(`野戰告捷！${c.name}守軍僅剩 ${fmt(state.garrison[id])}`, 'good');
+      toast(`${k === 'naval' ? '水戰' : '野戰'}告捷！${c.name}守軍僅剩 ${fmt(state.garrison[id])}`, 'good');
     } else {
       state.owners[id] = state.faction;
       state.garrison[id] = 3000;

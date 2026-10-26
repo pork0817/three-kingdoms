@@ -262,9 +262,32 @@ export const SHU_EARLY = [
       ['note', '「拔刀斫前奏案」：孫權以刀砍斷面前的桌案，表示抗曹的決心。孫劉聯軍由此結成。'],
       ['fx', S => { S.addRel('shu', 'wu', 15); S.flag('alliance'); }],
       ['stage', 'river', 'wu'],
-      ['narr', '十一月，周瑜、程普率水軍三萬，與劉備並力逆曹操，遇於赤壁。黃蓋以十艘戰船滿載薪草，灌以膏油，詐稱來降……'],
-      ['effect', 'fire'],
-      ['narr', '「時風盛猛，悉延燒岸上營落。頃之，煙炎張天，人馬燒溺死者甚眾。」'],
+      ['narr', '十一月，周瑜、程普率水軍三萬，與劉備並力逆曹操，遇於赤壁。曹軍戰船首尾相接，黃蓋請以火攻。'],
+      ['stage', 'tent', 'shu', [['liubei', 0, 6, P], ['zhugeliang', -2.6, 2.5, P * 0.75], ['guanyu', 2.6, 2.5, -P * 0.75], ['zhangfei', 3.4, 0, -P * 0.62], ['zhaoyun', -3.4, 0, P * 0.62]]],
+      ['say', 'zhugeliang', '曹軍北人，不習水戰，又以鐵索連舟。此戰勝負，全在一把火。'],
+      ['choice', '我軍如何助戰？', [
+        Y('諸葛亮設壇「借東風」，助周郎火攻', '習得兵法【火船】', S => S.learn('fireship')),
+        H('率關張趙登船，與吳軍並肩作戰', '兵力 +4000、士氣高昂；黃蓋火船先行，曹軍開戰時已傷亡慘重', S => { S.addTroops(4000); S.flag('chibiBrave'); }),
+      ]],
+      ['stage', 'river', 'shu'],
+      ['narr', '是夜，東南風大起。孫劉聯軍戰船順風而下，直逼曹營……'],
+      ['battle', S => ({
+        name: '赤壁之戰', sub: '孫劉聯軍 vs 曹操', terrain: 'naval', time: 'night', wind: [0, -1],
+        playerLeader: 'liubei', playerGenerals: ['zhugeliang', 'guanyu', 'zhangfei', 'zhaoyun'], maxTroops: S.flags.chibiBrave ? 24000 : 20000,
+        playerMorale: S.flags.chibiBrave ? 110 : 100, chained: S.flags.chibiBrave ? null : 'e',
+        enemy: { faction: 'wei', leader: 'caocao', generals: ['caocao', 'caoren', 'zhangliao', 'xuhuang', 'yujin'], troops: S.flags.chibiBrave ? 32000 : 55000, comp: { inf: 0.45, spear: 0.25, archer: 0.3 }, tactics: ['volley', 'drum'] },
+        enemyMorale: S.flags.chibiBrave ? 60 : 80,
+        reinforce: { side: 'p', at: S.flags.chibiBrave ? 20 : 30, troops: S.flags.chibiBrave ? 28000 : 24000, general: 'zhouyu', generals: ['huanggai', 'ganning', 'chengpu'], types: ['archer', 'inf', 'archer', 'spear'], msg: '周瑜、黃蓋率江東水師殺到！孫劉聯軍並力破曹！' },
+        parley: { enemyOpen: ['大耳賊！敗軍之將，也敢來江上送死？'] },
+        tips: '水戰：弓兵是主力，騎兵無法上船。曹軍戰船以鐵索相連——若有【火船】，順東南風放出，火勢會延燒整支艦隊！約 30 秒後周瑜的吳軍水師會趕到。',
+      }), [
+        ['effect', 'fire'],
+        ['narr', '「時風盛猛，悉延燒岸上營落。頃之，煙炎張天，人馬燒溺死者甚眾。」'],
+        ['fx', S => { S.flag('chibiWin'); S.addGold(1500); S.addRenown(8); S.addRel('shu', 'wu', 10); }],
+      ], [
+        ['narr', '我軍一度受挫，幸賴周瑜、黃蓋火船得手，曹軍終究大敗。'],
+        ['effect', 'fire'],
+      ]],
       ['stage', 'field', 'shu', [['liubei', 0, 6, P], ['zhugeliang', -2.6, 2.5, P * 0.75], ['guanyu', 2.6, 2.5, -P * 0.75], ['zhangfei', 3.4, 0, -P * 0.62], ['zhaoyun', -3.4, 0, P * 0.62]]],
       ['say', 'zhugeliang', '曹操兵敗，必走華容道。主公可遣一軍埋伏於此。'],
       ['choice', '派誰伏擊華容道？', [
@@ -702,10 +725,10 @@ export const WU_LATE = {
       ['if', S => S.flags.yizhouGo, [
         ['march', 'jianan', 'yizhou', 'wu'],
         ['battle', {
-          name: '夷州之戰', sub: '衛溫 vs 夷州部落', terrain: 'plains', beach: true, forest: 'all',
+          name: '夷州之戰', sub: '衛溫 vs 夷州水師', terrain: 'naval', sea: true, island: [0, -330], time: 'dawn',
           playerLeader: 'weiwen', playerGenerals: ['quancong'], maxTroops: 12000,
           enemy: { faction: 'yizhou', leader: 'yizhouwang', generals: ['yizhouwang'], troops: 9000, comp: { inf: 0.6, spear: 0.2, archer: 0.2 }, tactics: ['drum'] },
-          tips: '登陸作戰：小心叢林中的部落戰士。',
+          tips: '外海決戰：夷州部落駕舟迎擊。水戰中弓兵是主力，擊潰敵船即可登島。',
         }, [
           ['owner', 'yizhou', 'wu'],
           ['narr', '衛溫於夷州得數千人而還。然「軍行經歲，士眾疾疫死者十有八九」。'],
