@@ -319,3 +319,57 @@ export function makeShip(L, W, colorHex, big = false) {
   g.userData.deck = 1.6;
   return g;
 }
+
+// —— 攻城器具 ——
+// 衝車：有頂棚的四輪車，內懸撞木
+export function makeRamCart() {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5a3a20, roughness: 0.9 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x3a2414, roughness: 0.9 });
+  const hide = new THREE.MeshStandardMaterial({ color: 0x8a6a4a, roughness: 1 });
+  const iron = new THREE.MeshStandardMaterial({ color: 0x555a60, metalness: 0.7, roughness: 0.4 });
+  const add = (geo, m, x, y, z, rx = 0, ry = 0, rz = 0) => { const me = new THREE.Mesh(geo, m); me.position.set(x, y, z); me.rotation.set(rx, ry, rz); me.castShadow = true; g.add(me); return me; };
+  add(new THREE.BoxGeometry(3.2, 0.3, 6.5), wood, 0, 0.9, 0);
+  for (const [x, z] of [[-1.7, -2.4], [1.7, -2.4], [-1.7, 2.4], [1.7, 2.4]]) add(new THREE.CylinderGeometry(0.75, 0.75, 0.3, 12), dark, x, 0.75, z, 0, 0, Math.PI / 2);
+  for (const [x, z] of [[-1.4, -3], [1.4, -3], [-1.4, 3], [1.4, 3]]) add(new THREE.BoxGeometry(0.25, 2.6, 0.25), wood, x, 2.2, z);
+  const roof = add(new THREE.CylinderGeometry(0.1, 2.3, 1.6, 4, 1), hide, 0, 4.1, 0, 0, Math.PI / 4);
+  roof.scale.set(1, 1, 2.1);
+  const log = new THREE.Group(); log.position.set(0, 2.6, 0); g.add(log);
+  const l = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.36, 7.5, 10), wood); l.rotation.x = Math.PI / 2; l.castShadow = true; log.add(l);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.9, 10), iron); tip.rotation.x = -Math.PI / 2; tip.position.z = -4.1; log.add(tip);
+  for (const z of [-1.5, 1.5]) { const r = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.4, 4), dark); r.position.set(0, 0.7, z); log.add(r); }
+  g.userData.log = log;
+  return g;
+}
+// 撞木：士兵合抱的粗大圓木
+export function makeLogRam() {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 0.9 });
+  const log = new THREE.Group(); g.add(log);
+  const l = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 6, 10), wood); l.rotation.x = Math.PI / 2; l.castShadow = true; log.add(l);
+  for (const z of [-2, -0.7, 0.7, 2]) { const h = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.08), wood); h.position.set(0, 0, z); log.add(h); }
+  log.position.y = 1.1;
+  g.userData.log = log;
+  return g;
+}
+// 雲梯
+export function makeLadder(h) {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a32, roughness: 0.9 });
+  for (const x of [-0.45, 0.45]) { const r = new THREE.Mesh(new THREE.BoxGeometry(0.1, h, 0.12), wood); r.position.set(x, h / 2, 0); r.castShadow = true; g.add(r); }
+  for (let y = 0.5; y < h; y += 0.6) { const r = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.07, 0.07), wood); r.position.set(0, y, 0); g.add(r); }
+  return g;
+}
+// 井闌：可移動的高大箭樓
+export function makeSiegeTower(h) {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5a3a20, roughness: 0.9 });
+  const hide = new THREE.MeshStandardMaterial({ color: 0x8a6a4a, roughness: 1 });
+  const add = (geo, m, x, y, z) => { const me = new THREE.Mesh(geo, m); me.position.set(x, y, z); me.castShadow = true; g.add(me); return me; };
+  for (const [x, z] of [[-1.8, -1.8], [1.8, -1.8], [-1.8, 1.8], [1.8, 1.8]]) add(new THREE.BoxGeometry(0.35, h, 0.35), wood, x, h / 2, z);
+  for (let y = 2; y < h; y += 3) add(new THREE.BoxGeometry(4, 0.25, 4), wood, 0, y, 0);
+  add(new THREE.BoxGeometry(4.4, 2, 0.2), hide, 0, h - 0.6, -2.1);
+  add(new THREE.BoxGeometry(4.6, 0.4, 4.6), wood, 0, h + 0.2, 0);
+  for (const [x, z] of [[-1.8, -1.8], [1.8, -1.8], [-1.8, 1.8], [1.8, 1.8]]) { const w = add(new THREE.CylinderGeometry(0.6, 0.6, 0.3, 10), wood, x, 0.6, z); w.rotation.z = Math.PI / 2; }
+  return g;
+}

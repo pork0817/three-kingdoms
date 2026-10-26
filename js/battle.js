@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { FACTIONS, GENERALS, TACTICS, WEAPONS, UNIT_TYPES, COUNTER, FORMATIONS, gname } from './data.js';
 import { makeNoise, clamp, lerp, smoothstep, rand, pick, sleep, tween, ease, fmt, mulberry32 } from './util.js';
-import { makeBanner, waveBanner, treeGeometries, makeWall, makeTent, makeCatapult, makeShip } from './models.js';
+import { makeBanner, waveBanner, treeGeometries, makeWall, makeTent, makeCatapult, makeShip, makeRamCart, makeLogRam, makeLadder, makeSiegeTower } from './models.js';
 import { Q } from './settings.js';
 import { makeHero, soldierRig, poseAngles, animateHero } from './figures.js';
 import { battleLines, bark, logLine } from './dialogue.js';
@@ -454,6 +454,10 @@ export class Battle {
     atk *= 1 + (war - 65) / 140; def *= 1 + (lead - 65) / 140;
     const W = (w) => this.hasWeapon(sq.side, w);
     if (sq.type === 'cav' && W('armor')) def *= 1.3;
+    if (sq.type === 'cav' && W('horse')) { spd *= 1.2; atk *= 1.1; }
+    if (sq.type === 'inf' && W('rattan')) def *= 1.25;
+    if (sq.type === 'cav' && this.hasWeapon(sq.side === 'p' ? 'e' : 'p', 'caltrop') && !sq.engaged) spd *= 0.7;
+    if (sq.confusedUntil > this.simT) { atk *= 0.5; spd *= 0.3; }
     if (sq.type === 'archer' && W('crossbow')) atk *= 1.4;
     if (sq.type === 'spear' && W('spear')) atk *= 1.25;
     if (this.cfg.river && W('warship')) atk *= 1.15;
@@ -883,7 +887,7 @@ export class Battle {
         const d = sq.pos.distanceTo(f.pos);
         if (d < f.r + sq.radius * 0.6) {
           const mult = Math.min(4, 1 + this.forestAt(sq.pos.x, sq.pos.y) * 1.6 + this.campAt(sq.pos.x, sq.pos.y) * 0.7 + (f.bonus || 0));
-          sq.loss += (sq.troops * 0.0055 + 6) * mult * f.power * dt;
+          sq.loss += (sq.troops * 0.0055 + 6) * mult * f.power * dt * (sq.type === 'inf' && this.hasWeapon(sq.side, 'rattan') ? 1.5 : 1);
           sq.morale -= dt * 1.1 * Math.min(mult, 2.5);
           if (!sq.routed && sq.order !== 'move' && sq.side === 'e' && Math.random() < dt * 0.2) { sq.moveTo = new V2(sq.pos.x + rand(-30, 30), sq.pos.y + (sq.side === 'p' ? 30 : -30)); }
         }
@@ -936,7 +940,7 @@ export class Battle {
         // 攻方近戰無雲梯時不能打城上守軍
         if (f.wallSquad && !isArch && sq.side === this.attSide && !this.canClimb(sq)) d += 1e5;
         if (sq.wallSquad && !f.onWall && !this.inRangeOfWall(sq, f)) d += 500;
-        if (sq.side === this.defSide && !sq.wallSquad && !isArch && this.outside(f.pos.y) && !this.gate.broken && sq.side === 'e') d += 400;
+        if (sq.side === this.defSide && !sq.wallSquad && !isArch && this.outside(f.pos.y) && !this.gate.broken && !sq.sally) d += 400;
       }
       if (d < bd) { bd = d; best = f; }
     }
@@ -951,7 +955,7 @@ export class Battle {
     if (this.siege && !sq.onWall) {
       const sOut = this.outside(sq.pos.y), gOut = this.outside(g.y);
       if (sOut !== gOut) {
-        const canPass = sq.side === this.defSide || this.gate.broken;
+        const canPass = this.gate.broken || this.gateOpen || (sq.side === this.defSide && sq.sally);
         const front = new V2(0, this.zw + (sOut ? 1 : -1) * this.sgnAtt * 9);
         if (canPass) {
           const inCorr = Math.abs(sq.pos.x) < 5 && Math.abs(sq.pos.y - this.zw) < 10;
@@ -987,6 +991,7 @@ export class Battle {
   doSquad(sq, dt) {
     const st = this.stats(sq);
     sq.state = 'idle';
+    if (sq.confusedUntil > this.simT) { sq.state = 'hold'; this.fightInRange(sq, st, dt, false); return; }
     // 攀城
     if (sq.climbing) {
       sq.climbT += dt; sq.state = 'climb';
@@ -1006,7 +1011,7 @@ export class Battle {
     }
     if (sq.order === 'retreat') {
       const l = this.moveToward(sq, sq.home, st.spd * 1.1, dt); sq.state = 'move';
-      if (l < 2) sq.order = 'hold';
+      if (l < 2) { sq.order = 'hold'; if (this.siege && !this.outside(sq.pos.y)) sq.sally = false; }
       return;
     }
     if (sq.moveTo && sq.order === 'auto') { // AI 避火
@@ -1040,8 +1045,10 @@ export class Battle {
         const l = this.moveToward(sq, gp, st.spd, dt);
         if (l < sq.radius + 4) {
           sq.state = 'gate'; sq.engaged = true;
-          const ram = this.hasWeapon(sq.side, 'ram') ? 3 : 1;
-          this.gate.hp -= sq.troops * 0.0016 * st.atk * (ram === 3 ? 2.2 : 1) * dt;
+          if (sq.engine === undefined) this.assignEngine(sq);
+          const em = sq.engine === 'cart' ? 2.2 : sq.engine === 'log' ? 1 : 0.25;
+          this.gate.hp -= sq.troops * 0.0016 * st.atk * em * dt;
+          if (sq.engineMesh?.userData.log && Math.sin(this.time * 4 + sq.id) > 0.97 && Math.random() < 0.5) SFX.drum(0.35);
           if (Math.random() < dt * 3) SFX.clash(0.12);
           if (Math.random() < dt * 4) this.particlesN.emit(gp.x + rand(-5, 5), rand(1, 4), gp.y, rand(-1, 1), rand(1, 2), rand(-1, 1), 1.5, 4, 0.6, 0.55, 0.45, 0.6, 0, 2);
         } else sq.state = 'move';
@@ -1100,7 +1107,13 @@ export class Battle {
     } else if (sq.wallSquad && best.onWall && bd < st.range) this.melee(sq, best, st, dt, 1);
   }
 
+  crossWall(a, b) {
+    if (!this.siege || this.gate.broken || this.gateOpen) return false;
+    if (a.onWall || b.onWall || a.wallSquad || b.wallSquad || a.climbing || b.climbing) return false;
+    return this.outside(a.pos.y) !== this.outside(b.pos.y);
+  }
   melee(sq, tgt, st, dt, mult) {
+    if (this.crossWall(sq, tgt)) return;
     const ts = this.stats(tgt);
     if (!sq._fought) { sq._fought = true; if (sq.general && Math.random() < 0.6) this.barkAt(sq, 'charge'); }
     sq.engaged = true; sq.state = 'fight'; sq.fightWith = tgt;
@@ -1134,6 +1147,7 @@ export class Battle {
     if (tgt.wallSquad) m *= 0.5;
     if (sq.wallSquad) m *= 1.2;
     if (tgt.climbing) m *= 2.5;
+    if (tgt.wallSquad && this.siege && sq.side === this.attSide && this.hasWeapon(sq.side, 'tower')) m *= 1.6;
     const hd = this.ground(sq.pos.x, sq.pos.y) - this.ground(tgt.pos.x, tgt.pos.y) + (sq.wallSquad ? this.wallH : 0);
     if (hd > 5) m *= 1.2;
     const dmg = sq.troops * 0.0085 * st.atk * m / ts.def * dt;
@@ -1236,6 +1250,10 @@ export class Battle {
     if (id === 'ambush') return this.squads.some(s => s.side === side && s.hidden && !s.dead);
     if (id === 'rockfall') return this.rockfallTargets(side).length > 0;
     if (id === 'fireship') return this.naval;
+    if (id === 'water') return !S.usedWater && !!(this.cfg.river || this.cfg.riverMid) && !this.naval;
+    if (id === 'firearrow') return mine.some(s => s.type === 'archer' && s.released && s.engaged) && this.weather !== 'rain';
+    if (id === 'trap') return this.enemiesOf(side).some(s => s.type === 'cav' && !s.dead);
+    if (id === 'confuse') return this.enemiesOf(side).some(s => this.visibleTarget(s, side) && !s.routed);
     if (id === 'raid') return false;
     return true;
   }
@@ -1311,10 +1329,60 @@ export class Battle {
       case 'shield':
         S.buffs.push({ id, def: 1.6, until: this.simT + 10 });
         break;
+      case 'firearrow': {
+        for (const s of mine) if (s.type === 'archer' && s.released) {
+          const t = s.target && !s.target.dead ? s.target : this.chooseTarget(s); if (!t) continue;
+          t.loss += s.troops * 0.03 * intF; t.morale -= 6; this.volleyVisual(s, t, 30);
+          this.fires.push({ pos: t.pos.clone(), r: 12, until: this.simT + 8, by: side, power: 0.6 * intF, spread: 4, canSpread: this.forestAt(t.pos.x, t.pos.y) > 0.4 });
+        }
+        SFX.fireSound(0.3);
+        break;
+      }
+      case 'trap': {
+        const foe = side === 'p' ? 'e' : 'p';
+        this.sides[foe].buffs.push({ id: 'trapped', spd: 0.5, def: 0.8, until: this.simT + 15, filter: s => s.type === 'cav' });
+        for (const s of this.enemiesOf(side)) if (s.type === 'cav') { s.loss += s.troops * 0.04; s.morale -= 8; }
+        break;
+      }
+      case 'decoy': {
+        const foe = side === 'p' ? 'e' : 'p';
+        this.sides[foe].buffs.push({ id: 'decoyed', atk: 0.85, until: this.simT + 12 });
+        for (const s of this.enemiesOf(side)) s.morale -= 12 * intF;
+        if (!this._decoyBanners) {
+          this._decoyBanners = true;
+          const an = this.anchor(side), F = FACTIONS[side === 'p' ? this.pf : this.ef];
+          for (let i = 0; i < 10; i++) { const b = makeBanner(F.name, F.css, 8, 2); const x = an.x + (i - 4.5) * 14, z = an.y + (side === 'p' ? 40 : -40); b.position.set(x, this.ground(x, z), z); this.scene.add(b); (this.decoBanners ||= []).push(b); }
+        }
+        break;
+      }
+      case 'water': {
+        S.usedWater = true;
+        this.doFlood(side === 'p' ? 'e' : 'p', 0.85);
+        break;
+      }
+      case 'confuse': {
+        const foes = this.enemiesOf(side).filter(e => this.visibleTarget(e, side) && !e.routed).sort((a, b) => b.troops - a.troops);
+        const t = target || foes[0]; if (!t) return false;
+        const resist = (GENERALS[t.general]?.int || 50) / 200;
+        if (Math.random() < 0.85 - resist) { t.confusedUntil = this.simT + 6 + intF * 4; t.morale -= 10; this.barkAt(t, 'rout', '……軍中有變？！'); this.log(side, `${this.sqName(t)}中了擾亂之計，陷入混亂！`); }
+        else this.log(side === 'p' ? 'e' : 'p', `${this.sqName(t)}識破了擾亂之計！`);
+        break;
+      }
+      case 'encircle': {
+        S.buffs.push({ id, atk: 1.25, until: this.simT + 12 });
+        for (const s of this.enemiesOf(side)) if (s.attackers > 0) s.morale -= 10;
+        break;
+      }
+      case 'medic': {
+        for (const s of mine) { const heal = Math.min(s.max - s.troops, s.max * 0.07 * intF); s.troops += heal; s.morale = Math.min(110, s.morale + 6); }
+        break;
+      }
       case 'rockfall': {
         const tg = this.rockfallTargets(side);
+        const oil = this.siege && side === this.defSide && this.hasWeapon(side, 'oil');
         for (const t of tg) {
-          t.loss += t.troops * 0.09 * intF + 40; t.morale -= 12;
+          t.loss += (t.troops * 0.09 * intF + 40) * (oil ? 1.6 : 1); t.morale -= 12;
+          if (oil && t.engine === 'cart' && t.pos.distanceTo(this.gatePos()) < 30) { t.engine = 'log'; this.removeEngine(t); this.log(side, `火油傾瀉而下，${this.sqName(t)}的衝車被焚毀！`); this.fires.push({ pos: t.pos.clone(), r: 10, until: this.simT + 6, by: side, power: 0.6, spread: 9, canSpread: false }); }
           if (t.climbing) { t.climbing = false; t.climbT = 0; }
           for (let i = 0; i < 4; i++) {
             const from = new THREE.Vector3(t.pos.x + rand(-8, 8), (this.siege ? this.wallH + 3 : this.ground(t.pos.x, t.pos.y) + 25), this.siege ? this.zw : t.pos.y + rand(-20, 20));
@@ -1341,6 +1409,8 @@ export class Battle {
     if (this.simT > 12) tryUse('fire', pin ? 0.3 : 0.05);
     if (this.squads.filter(s => s.side === 'e' && s.engaged).length >= 2) tryUse('shield', 0.15);
     tryUse('rockfall', 0.35);
+    if (this.simT > 10) { tryUse('decoy', 0.06); tryUse('trap', this.enemiesOf('e').some(s => s.type === 'cav' && s.state === 'move') ? 0.25 : 0); tryUse('firearrow', 0.12); tryUse('encircle', 0.05); }
+    if (this.sideLossRatio('e') > 0.35) tryUse('medic', 0.2);
     if (this.simT > 35) tryUse('fireship', 0.2);
     if (this.simT > 20) tryUse('feint', 0.03);
   }
@@ -1350,6 +1420,7 @@ export class Battle {
     for (const sq of this.squads) sq._hideV = (sq.hidden && sq.side === 'e' && !sq.revealed && !this.cfg.enemyAmbush?.revealed) || (sq.side === 'e' && this.phase === 'fight' && !this.visibleTo('p', sq));
     this.updateNaval(rdt);
     this.updateWeather(rdt);
+    this.updateSiegeGear(rdt);
     const dummy = this._d || (this._d = new THREE.Object3D());
     const t = this.time;
     for (const sq of this.squads) sq._spd = this.stats(sq).spd;
@@ -1547,6 +1618,63 @@ export class Battle {
     }
     R.g.attributes.position.needsUpdate = true;
   }
+  // —— 攻城器具 ——
+  assignEngine(sq) {
+    if (!(sq.type === 'inf' || sq.type === 'spear')) { sq.engine = null; return; }
+    this._carts = this._carts || 0;
+    if (this.hasWeapon(sq.side, 'ram') && this._carts < 2) { this._carts++; sq.engine = 'cart'; } else sq.engine = 'log';
+  }
+  removeEngine(sq) { if (sq.engineMesh) { this.scene.remove(sq.engineMesh); sq.engineMesh = null; } }
+  updateSiegeGear(rdt) {
+    if (!this.siege) return;
+    const gp = this.gatePos();
+    for (const sq of this.squads) {
+      // 撞門器具：攻方步兵、槍兵在城門未破前推著衝車或扛著撞木
+      if (sq.side === this.attSide && (sq.type === 'inf' || sq.type === 'spear') && !this.gate.broken && !sq.dead && !sq.routed && !sq.escaped && !sq.onWall && !sq.climbing && this.phase !== 'setup' && sq.released && !this.canClimbFor(sq)) {
+        if (sq.engine === undefined) this.assignEngine(sq);
+        if (sq.engine && !sq.engineMesh) { sq.engineMesh = sq.engine === 'cart' ? makeRamCart() : makeLogRam(); sq.engineMesh.traverse(o => { if (o.isMesh) o.castShadow = true; }); this.scene.add(sq.engineMesh); }
+        if (sq.engineMesh) {
+          const fx = -Math.sin(sq.yaw), fz = -Math.cos(sq.yaw), off = (sq.depth || 6) / 2 + (sq.engine === 'cart' ? 4.5 : 2.2);
+          const x = sq.pos.x + fx * off, z = sq.pos.y + fz * off;
+          const m = sq.engineMesh;
+          m.position.lerp(new THREE.Vector3(x, this.ground(x, z), z), Math.min(1, rdt * 3));
+          m.rotation.y = sq.yaw;
+          const log = m.userData.log;
+          if (log) log.position.z = sq.state === 'gate' ? Math.sin(this.time * 4 + sq.id) * 0.9 : 0;
+          if (sq.state === 'gate' && Math.sin(this.time * 4 + sq.id) > 0.95 && Math.random() < 0.3) for (let i = 0; i < 6; i++) this.particlesN.emit(gp.x + rand(-4, 4), rand(1, 5), gp.y, rand(-2, 2), rand(1, 3), rand(-1, 1), 1.5, 3.5, 0.55, 0.5, 0.42, 0.6, 0, 2);
+        }
+      } else if (sq.engineMesh && (this.gate.broken || sq.dead || sq.routed || sq.escaped)) this.removeEngine(sq);
+      // 雲梯
+      const climbing = (sq.climbing || (sq.onWall && !sq.wallSquad)) && !sq.dead;
+      if (climbing && !sq.ladders) {
+        sq.ladders = [-5, 0, 5].map(dx => { const l = makeLadder(this.wallH + 1.6); this.scene.add(l); return { l, dx }; });
+      }
+      if (sq.ladders) {
+        if (!climbing) { sq.ladders.forEach(o => this.scene.remove(o.l)); sq.ladders = null; }
+        else for (const o of sq.ladders) {
+          const x = sq.pos.x + o.dx, z = this.zw + this.sgnAtt * 6.2;
+          o.l.position.set(x, this.ground(x, z), z); o.l.rotation.set(-this.sgnAtt * 0.24, 0, 0);
+        }
+      }
+      // 井闌
+      if (sq.side === this.attSide && sq.type === 'archer' && this.hasWeapon(sq.side, 'tower') && !sq.dead && !sq.escaped) {
+        if (!sq.towerMesh) { sq.towerMesh = makeSiegeTower(this.wallH + 2); this.scene.add(sq.towerMesh); }
+        const fx = -Math.sin(sq.yaw), fz = -Math.cos(sq.yaw), off = (sq.depth || 6) / 2 + 4;
+        const x = sq.pos.x + fx * off, z = sq.pos.y + fz * off;
+        sq.towerMesh.position.lerp(new THREE.Vector3(x, this.ground(x, z), z), Math.min(1, rdt * 2)); sq.towerMesh.rotation.y = sq.yaw;
+      } else if (sq.towerMesh && (sq.dead || sq.escaped)) { this.scene.remove(sq.towerMesh); sq.towerMesh = null; }
+    }
+    // 守軍出城時城門開啟
+    const open = !this.gate.broken && this.squads.some(s => s.side === this.defSide && s.sally && !s.dead && Math.abs(s.pos.x) < 14 && Math.abs(s.pos.y - this.zw) < 18);
+    if (open !== this.gateOpen) {
+      this.gateOpen = open;
+      const gm = this.gate.mesh, h0 = (this.wallH - 1) / 2;
+      tween(500, t => { gm.position.y = open ? h0 + t * (this.wallH - 2) : (this.wallH - 2) * (1 - t) + h0; });
+      this.log(this.defSide, open ? '城門大開，守軍出城突擊！' : '城門關閉！');
+    }
+  }
+  canClimbFor(sq) { return this.canClimb(sq) && this.squads.some(o => o.side !== sq.side && o.wallSquad && !o.dead) && sq.target?.wallSquad; }
+
   // 士兵之間的推擠（空間雜湊）
   separate() {
     const cell = 2, H = new Map();
@@ -1752,6 +1880,7 @@ export class Battle {
     const sq = this.selected;
     if (!sq || sq.side !== 'p' || sq.dead) return;
     const mk = (t, fn, on) => { const b = el('button', 'btn small' + (on ? ' active' : ''), t, o); b.onclick = fn; };
+    if (this.siege && this.defSide === 'p' && !sq.wallSquad && !this.gate.broken) mk(sq.sally ? '回城' : '出城突擊', () => { sq.sally = !sq.sally; sq.order = sq.sally ? 'auto' : 'retreat'; sq.released = true; this.updateOrders(); }, sq.sally);
     if (!sq.released && !sq.hidden) mk('出擊', () => { sq.released = true; sq.state = 'idle'; this.buildCards(); this.updateOrders(); });
     if (sq.hidden) mk('伏兵殺出', () => this.useTactic('p', 'ambush'));
     mk('自動進攻', () => { sq.order = 'auto'; sq.moveTo = null; sq.released = true; this.updateOrders(); }, sq.order === 'auto');
@@ -1898,7 +2027,7 @@ export class Battle {
   orbitIntro() {
     this._skip = false;
     const btn = el('button', 'btn skip-btn', '跳過 ▶▶', root());
-    btn.onclick = () => { this._skip = true; };
+    btn.onclick = () => { this._skip = true; document.querySelectorAll('.title-card').forEach(t => t.remove()); };
     const end = new THREE.Vector3(0, 60, this.siege && this.attSide === 'e' ? 125 : 150), endT = new THREE.Vector3(0, 0, this.siege ? this.zw * 0.4 : 15);
     const r0 = 230, D = 7500;
     return new Promise(res => {
@@ -2068,8 +2197,10 @@ export class Battle {
     return new Promise(resolve => {
       const st = this.state, c = this.cfg;
       const avail = Math.min(st.troops, c.maxTroops || st.troops);
-      const allowAmbush = st.hasTactic('ambush') && (this.terrain === 'mountain' || c.forest || c.allowAmbush) && !this.siege;
+      const allowAmbush = (st.hasTactic('ambush') || c.allowAmbush) && (this.terrain === 'mountain' || c.forest || c.allowAmbush) && !this.siege && !this.naval;
+      if (allowAmbush && c.allowAmbush && c.enemyMarching && !this._ambushDefaulted) { this._ambushDefaulted = true; this.playerRows.forEach((r, i) => { if (i >= 2) r.ambush = true; }); }
       const rows = this.playerRows.map(r => ({ ...r }));
+      if (this._ambushDefaulted && !this._ambushApplied) { this._ambushApplied = true; this.applyPlayerRows(rows); }
       const injured = this.injured || [];
       for (const r of rows) if (injured.includes(r.general)) r.general = '';
       const lost = this.capturedP || [];
@@ -2097,7 +2228,7 @@ export class Battle {
               <div class="tn">${fmt(r.troops)}</div>
               <div class="sub"><input type="range" class="tr" min="0" max="${avail}" step="500" value="${r.troops}" style="flex:1">
                 <select class="wv" style="width:76px">${[1, 2, 3].map(w => `<option value="${w}" ${r.wave === w ? 'selected' : ''}>第${'一二三'[w - 1]}波</option>`).join('')}</select>
-                ${allowAmbush && i > 0 ? `<label><input type="checkbox" class="am" ${r.ambush ? 'checked' : ''}>伏兵</label>` : ''}
+                ${allowAmbush && i > 0 ? `<label class="am-lbl"><input type="checkbox" class="am" ${r.ambush ? 'checked' : ''}>設為伏兵</label>` : ''}
                 ${i > 0 ? '<button class="btn small rm">✕</button>' : ''}
               </div></div>`).join('')}
           ${rows.length < 6 ? '<button class="btn small add">＋ 增加部隊</button>' : ''}
@@ -2142,6 +2273,7 @@ export class Battle {
     for (const s of this.squads) {
       if (s.side === 'p' && s.wave === 1 && !s.hidden) { s.released = true; s.state = 'idle'; }
       if (s.side === 'p' && this.siege && this.defSide === 'p' && !s.wallSquad) s.order = 'hold';
+      if (s.side === 'p' && s.hidden && !this.sides.p.tactics.includes('ambush')) this.sides.p.tactics.push('ambush');
     }
     this.sides.p.init = this.squads.filter(s => s.side === 'p').reduce((a, s) => a + s.troops, 0);
     this.sides.e.init = this.squads.filter(s => s.side === 'e').reduce((a, s) => a + s.troops, 0);
@@ -2167,9 +2299,9 @@ export class Battle {
     return new Promise(resolve => { this.resolveFight = resolve; });
   }
 
-  doFlood(side) {
-    for (const s of this.squads) if (s.side === side && !s.dead) { s.troops *= 0.6; s.max *= 0.6; s.morale -= 30; }
-    this.sides[side].init *= 0.6;
+  doFlood(side, k = 0.6) {
+    for (const s of this.squads) if (s.side === side && !s.dead) { s.troops *= k; s.max *= k; s.morale -= 30 * (1 - k) / 0.4; }
+    this.sides[side].init *= k;
     this.log(side === 'e' ? 'p' : 'e', '秋雨連綿，漢水暴漲！洪水灌入營寨！');
     const w = new THREE.Mesh(new THREE.PlaneGeometry(900, 900), new THREE.MeshStandardMaterial({ color: 0x5a6a5a, transparent: true, opacity: 0.75, roughness: 0.2 }));
     w.rotation.x = -Math.PI / 2; w.position.y = -3; this.scene.add(w);

@@ -115,7 +115,10 @@ function helpModal() {
   <b>糧草</b>：每季軍隊會消耗糧草，斷糧會使士卒逃亡、戰鬥士氣下降。<b>忠誠</b>：武將忠誠過低可能叛逃，可在軍營賞賜提升。武將也會依史實年歲老去、病逝。<br>
   <b>作戰</b>：左鍵（觸控：點一下）選取部隊，再點地面移動、點敵軍攻擊。右側為兵法；左下控制速度與波次。拖曳旋轉視角、滾輪／雙指縮放、WASD 平移。<br>
   <b>地形天氣</b>：渡河時移動緩慢且防禦下降；居高臨下攻擊加成；雨天無法有效火攻、弓兵減弱；夜晚與大霧視野受限；水戰中騎兵無法上陣，可用火船順風攻擊。<br>
-  <b>兵種相剋</b>：槍兵剋騎兵、騎兵剋弓兵、弓兵剋步兵、步兵剋槍兵。
+  <b>兵種相剋</b>：槍兵剋騎兵、騎兵剋弓兵、弓兵剋步兵、步兵剋槍兵。<br>
+  <b>攻守城</b>：攻城時步兵、槍兵會扛撞木撞門，有【衝車】破門更快；有【雲梯】可攀城、【井闌】讓弓兵壓制城頭、【霹靂車】投石。守城時城門未破，守軍只能留在城內或城頭；可對部隊下令「出城突擊」，城門會打開（敵軍也可趁機衝入）。<br>
+  <b>伏兵</b>：山地、林地或劇情允許時，布陣表中可勾選「設為伏兵」，部隊會藏於兩側山林，敵軍接近或按【伏】時殺出。<br>
+  <b>市集</b>：可用金錢購買兵書（學習兵法）、兵器，以及糧草、僱傭兵、戰馬。
   </div>`, [{ text: '明白了', primary: true }]);
 }
 
@@ -196,6 +199,7 @@ function buildHUD() {
   const r1 = el('div', 'btn-row', '', hud.actions);
   el('button', 'btn', '軍營', r1).onclick = campModal;
   el('button', 'btn', '外交', r1).onclick = diplomacyModal;
+  el('button', 'btn', '市集', r1).onclick = () => shopModal();
   el('button', 'btn', '結束本季', hud.actions).onclick = () => endSeason();
   const row = el('div', 'btn-row', '', hud.actions);
   el('button', 'btn small', '存檔', row).onclick = () => { state.save(); toast('已存檔', 'good'); };
@@ -314,6 +318,52 @@ function campModal() {
   if (tr) tr.onclick = () => { const c = 800 * (state.training + 1); if (state.gold < c) return toast('金錢不足', 'bad'); state.gold -= c; state.training++; toast(`訓練等級提升至 ${state.training}`, 'good'); document.querySelector('.modal-bg').remove(); campModal(); updateHUD(); };
   document.querySelectorAll('.roster .gift').forEach(b => b.onclick = (e) => { e.stopPropagation(); if (state.gold < 300) return toast('金錢不足', 'bad'); state.gold -= 300; state.addLoyalty(b.dataset.g, 15); toast(`賞賜${gname(b.dataset.g)}，忠誠 +15`, 'good'); document.querySelector('.modal-bg').remove(); campModal(); updateHUD(); });
   document.querySelectorAll('.roster .gcard').forEach(c => { c.style.cursor = 'pointer'; c.onclick = () => heroViewer(c.dataset.g); });
+}
+
+// —— 市集：兵書、兵器、物資 ——
+function shopModal(tab = 'tactic') {
+  const bg = el('div', 'modal-bg', '', root());
+  const m = el('div', 'modal shop', '', bg);
+  const draw = () => {
+    const tabs = [['tactic', '兵書'], ['weapon', '兵器'], ['goods', '物資']];
+    let body = '';
+    if (tab === 'tactic') body = Object.entries(TACTICS).map(([k, t]) => {
+      const owned = state.hasTactic(k);
+      return `<div class="shop-row ${owned ? 'owned' : ''}"><div class="shop-ic">${t.icon}</div><div class="shop-info"><b>${t.name}</b><div class="hint-txt">${t.desc}</div><div class="shop-q">${t.quote}</div></div>
+        ${owned ? '<span class="shop-own">已習得</span>' : `<button class="btn small" data-t="${k}" ${state.gold < t.price ? 'disabled' : ''}>${t.price} 金</button>`}</div>`;
+    }).join('');
+    if (tab === 'weapon') body = Object.entries(WEAPONS).map(([k, w]) => {
+      const owned = state.hasWeapon(k);
+      return `<div class="shop-row ${owned ? 'owned' : ''}"><div class="shop-ic">器</div><div class="shop-info"><b>${w.name}</b><div class="hint-txt">${w.desc}</div></div>
+        ${owned ? '<span class="shop-own">已擁有</span>' : `<button class="btn small" data-w="${k}" ${state.gold < (w.price || 1500) ? 'disabled' : ''}>${w.price || 1500} 金</button>`}</div>`;
+    }).join('');
+    if (tab === 'goods') {
+      const goods = [
+        ['buyfood', '購買糧草', '1000 金 → 糧 8000', state.gold >= 1000],
+        ['sellfood', '出售糧草', '糧 10000 → 700 金', state.food >= 10000],
+        ['merc', '招募僱傭兵', '1500 金 → 兵 5000（名望 -2）', state.gold >= 1500],
+        ['horses', '購買戰馬', '1200 金 → 全軍騎兵補充，兵 +2000', state.gold >= 1200],
+        ['gift', '犒賞三軍', '1000 金 → 全體武將忠誠 +6', state.gold >= 1000],
+      ];
+      body = goods.map(([k, n, d, ok]) => `<div class="shop-row"><div class="shop-ic">貨</div><div class="shop-info"><b>${n}</b><div class="hint-txt">${d}</div></div><button class="btn small" data-g="${k}" ${ok ? '' : 'disabled'}>購買</button></div>`).join('');
+    }
+    m.innerHTML = `<h2>市集</h2><div class="shop-tabs">${tabs.map(([k, n]) => `<button class="btn small ${tab === k ? 'active' : ''}" data-tab="${k}">${n}</button>`).join('')}<span class="shop-gold">持有 ${fmt(state.gold)} 金・糧 ${fmt(state.food)}</span></div>
+      <div class="shop-list">${body}</div><div class="modal-btns"><button class="btn primary close">關閉</button></div>`;
+    m.querySelector('.close').onclick = () => { bg.remove(); updateHUD(); };
+    m.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; draw(); });
+    m.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { const t = TACTICS[b.dataset.t]; state.gold -= t.price; state.learn(b.dataset.t); draw(); flushLearn(); });
+    m.querySelectorAll('[data-w]').forEach(b => b.onclick = () => { const w = WEAPONS[b.dataset.w]; state.gold -= w.price || 1500; state.gainWeapon(b.dataset.w); draw(); });
+    m.querySelectorAll('[data-g]').forEach(b => b.onclick = () => {
+      const k = b.dataset.g;
+      if (k === 'buyfood') { state.gold -= 1000; state.food += 8000; toast('購得糧草 8000', 'good'); }
+      if (k === 'sellfood') { state.food -= 10000; state.gold += 700; toast('出售糧草，得金 700', 'gold'); }
+      if (k === 'merc') { state.gold -= 1500; state.troops += 5000; state.renown -= 2; toast('招募僱傭兵 5000', 'good'); }
+      if (k === 'horses') { state.gold -= 1200; state.troops += 2000; toast('購得戰馬，兵力 +2000', 'good'); }
+      if (k === 'gift') { state.gold -= 1000; for (const g of state.generals) state.addLoyalty(g, 6); toast('犒賞三軍，全體武將忠誠 +6', 'good'); }
+      draw();
+    });
+  };
+  draw();
 }
 
 // —— 外交 ——
